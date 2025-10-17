@@ -2,6 +2,8 @@
 
 Terminal-based networked Battleship game written in Rust.
 
+![Demo](assets/demo.gif)
+
 ## Features
 
 - Two-player networked gameplay over TCP
