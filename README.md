@@ -66,9 +66,6 @@ cargo run --release -- client your-server-ip:8080
 cargo run --release -- client your-server-ip:8080
 ```
 
-The relay server forwards messages between two players.
-
-
 ## Controls
 
 - Arrow keys: Move cursor
@@ -119,4 +116,4 @@ The relay server forwards all messages between players.
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
