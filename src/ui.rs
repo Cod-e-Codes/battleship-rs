@@ -91,7 +91,25 @@ fn draw_grid(
     state: &GameState,
     is_own: bool,
 ) {
-    let block = Block::default().borders(Borders::ALL).title(title);
+    // Determine if this grid should be highlighted based on whose turn it is
+    let should_highlight = match state.phase {
+        GamePhase::YourTurn => !is_own, // Highlight enemy grid when it's your turn
+        GamePhase::OpponentTurn => is_own, // Highlight own grid when it's opponent's turn
+        _ => false,                     // No highlighting during placing or other phases
+    };
+
+    let border_style = if should_highlight {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(border_style);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
