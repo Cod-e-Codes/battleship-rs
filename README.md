@@ -1,4 +1,4 @@
-# ssh-battleship
+# battleship-rs
 
 Terminal-based networked Battleship game written in Rust.
 
@@ -6,9 +6,8 @@ Terminal-based networked Battleship game written in Rust.
 
 - Two-player networked gameplay over TCP
 - Single-player mode against AI opponent
-- Relay server mode for easy remote play (no SSH required)
+- Relay server mode for remote play
 - Terminal UI using ratatui
-- SSH tunnel compatible for remote play
 
 ## Requirements
 
@@ -18,8 +17,8 @@ Terminal-based networked Battleship game written in Rust.
 ## Installation
 
 ```bash
-git clone https://github.com/Cod-e-Codes/ssh-battleship
-cd ssh-battleship
+git clone https://github.com/Cod-e-Codes/battleship-rs
+cd battleship-rs
 cargo build --release
 ```
 
@@ -49,9 +48,9 @@ Connect:
 cargo run --release -- client 127.0.0.1:8080
 ```
 
-### Remote Play via Relay Server (Recommended)
+### Remote Play via Relay Server
 
-The relay server acts as a message broker between two players, making it easy to play over the internet without manual SSH tunneling.
+The relay server forwards messages between two players.
 
 On server machine (or cloud instance):
 ```bash
@@ -67,24 +66,8 @@ cargo run --release -- client your-server-ip:8080
 cargo run --release -- client your-server-ip:8080
 ```
 
-**Benefits of relay mode:**
-- No SSH setup required
-- Players can connect from anywhere
-- Simple firewall configuration (just open one port)
-- Perfect for cloud deployments
+The relay server forwards messages between two players.
 
-### Remote Play via SSH Tunnel (Traditional)
-
-On server machine:
-```bash
-cargo run --release -- server 8080
-```
-
-On client machine:
-```bash
-ssh -L 8080:localhost:8080 user@server-host
-cargo run --release -- client 127.0.0.1:8080
-```
 
 ## Controls
 
@@ -117,14 +100,11 @@ src/
 └── server_relay.rs - Relay server for remote play
 ```
 
-## Server Modes Comparison
+## Server Modes
 
-| Mode | Use Case | Network | Complexity |
-|------|----------|---------|------------|
-| `server` | Local/LAN play | Both players must reach server | Low |
-| `server-ai` | Single-player | Local only | Low |
-| `server-relay` | Internet play | Players connect to relay | Low |
-| SSH tunnel | Secure remote | Requires SSH access | Medium |
+- `server`: Two-player game, both players connect to same server
+- `server-ai`: Single-player against AI
+- `server-relay`: Message relay between two players
 
 ## Network Protocol
 
@@ -135,26 +115,7 @@ JSON messages over TCP, newline-delimited. Message types:
 - `YourTurn` / `OpponentTurn`: Turn management
 - `GameOver`: End game state
 
-The relay server transparently forwards all messages between players.
-
-## Cloud Deployment Example
-
-Deploy relay server on a VPS:
-
-```bash
-# On your cloud instance
-cargo build --release
-./target/release/ssh-battleship server-relay 8080
-
-# Make sure port 8080 is open in firewall
-# Example for Ubuntu with ufw:
-sudo ufw allow 8080/tcp
-```
-
-Players connect using your server's public IP:
-```bash
-cargo run --release -- client your.server.ip:8080
-```
+The relay server forwards all messages between players.
 
 ## License
 

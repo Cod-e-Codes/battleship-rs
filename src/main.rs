@@ -43,10 +43,6 @@ async fn main() -> Result<()> {
         println!("  {} client your-server-ip:8080  # Player 1", args[0]);
         println!("  {} client your-server-ip:8080  # Player 2", args[0]);
         println!();
-        println!("SSH Tunneling for remote play:");
-        println!("  On server machine: {} server 8080", args[0]);
-        println!("  On client machine: ssh -L 8080:localhost:8080 user@server-ip");
-        println!("  Then connect: {} client 127.0.0.1:8080", args[0]);
         return Ok(());
     }
 

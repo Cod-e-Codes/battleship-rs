@@ -14,8 +14,7 @@ pub async fn run_server_relay(port: &str) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))?;
     listener.set_nonblocking(true)?;
     println!("🔀 Relay Battleship Server listening on port {}", port);
-    println!("This server relays messages between two players.");
-    println!("Players can connect from anywhere without manual SSH tunneling.\n");
+    println!("This server relays messages between two players.\n");
 
     let shutdown = Arc::new(Mutex::new(false));
     let shutdown_flag = shutdown.clone();
