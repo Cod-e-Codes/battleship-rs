@@ -3,6 +3,7 @@ mod game_state;
 mod input;
 mod server;
 mod server_ai;
+mod server_relay;
 mod types;
 mod ui;
 
@@ -10,6 +11,7 @@ use anyhow::Result;
 use client::run_client;
 use server::run_server;
 use server_ai::run_server_ai;
+use server_relay::run_server_relay;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,6 +22,7 @@ async fn main() -> Result<()> {
         println!("Usage:");
         println!("  Two-player server: {} server <port>", args[0]);
         println!("  AI opponent:       {} server-ai <port>", args[0]);
+        println!("  Relay server:      {} server-relay <port>", args[0]);
         println!("  Client:            {} client <host:port>", args[0]);
         println!("\nExamples:");
         println!("  # Start a server for two players");
@@ -34,6 +37,11 @@ async fn main() -> Result<()> {
         println!("  # Or play against AI");
         println!("  {} server-ai 8080", args[0]);
         println!("  {} client 127.0.0.1:8080", args[0]);
+        println!();
+        println!("  # Or use relay server for remote play");
+        println!("  {} server-relay 8080", args[0]);
+        println!("  {} client your-server-ip:8080  # Player 1", args[0]);
+        println!("  {} client your-server-ip:8080  # Player 2", args[0]);
         println!();
         println!("SSH Tunneling for remote play:");
         println!("  On server machine: {} server 8080", args[0]);
@@ -51,12 +59,16 @@ async fn main() -> Result<()> {
             let port = args.get(2).map(|s| s.as_str()).unwrap_or("8080");
             run_server_ai(port).await
         }
+        "server-relay" => {
+            let port = args.get(2).map(|s| s.as_str()).unwrap_or("8080");
+            run_server_relay(port).await
+        }
         "client" => {
             let addr = args.get(2).map(|s| s.as_str()).unwrap_or("127.0.0.1:8080");
             run_client(addr).await
         }
         _ => {
-            println!("Invalid command. Use 'server', 'server-ai', or 'client'");
+            println!("Invalid command. Use 'server', 'server-ai', 'server-relay', or 'client'");
             println!("Run without arguments for help");
             Ok(())
         }
