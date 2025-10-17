@@ -48,9 +48,12 @@ pub async fn run_client(addr: &str) -> Result<()> {
                             }
                             Message::YourTurn => {
                                 state.phase = GamePhase::YourTurn;
+                                state.turn_count += 1;
+                                state.start_turn();
                                 state.messages.push("Your turn!".to_string());
                             }
                             Message::OpponentTurn => {
+                                state.end_turn();
                                 state.phase = GamePhase::OpponentTurn;
                                 state.messages.push("Opponent's turn...".to_string());
                             }
@@ -71,6 +74,9 @@ pub async fn run_client(addr: &str) -> Result<()> {
                             Message::AttackResult { x, y, hit, sunk } => {
                                 state.enemy_grid[y][x] =
                                     if hit { CellState::Hit } else { CellState::Miss };
+                                state.record_shot(hit);
+                                state.update_ship_status();
+
                                 if hit {
                                     state.messages.push(if sunk {
                                         format!("HIT at ({}, {})! Ship sunk!", x, y)

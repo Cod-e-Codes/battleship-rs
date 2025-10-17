@@ -57,6 +57,9 @@ pub fn handle_key_event(
                     state.messages.push(format!("Firing at ({}, {})...", x, y));
                 }
             }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                state.show_side_panel = !state.show_side_panel;
+            }
             KeyCode::Char('q') => return true,
             _ => {}
         },
@@ -65,11 +68,13 @@ pub fn handle_key_event(
                 return true;
             }
         }
-        GamePhase::WaitingForOpponent | GamePhase::OpponentTurn => {
-            if key.code == KeyCode::Char('q') {
-                return true;
+        GamePhase::WaitingForOpponent | GamePhase::OpponentTurn => match key.code {
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                state.show_side_panel = !state.show_side_panel;
             }
-        }
+            KeyCode::Char('q') => return true,
+            _ => {}
+        },
     }
     false
 }

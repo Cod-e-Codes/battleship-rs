@@ -45,31 +45,71 @@ pub fn draw_ui(f: &mut Frame, state: &GameState) {
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(title, chunks[0]);
 
-    // Game area
-    let game_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
+    // Game area - adjust layout based on side panel visibility
+    let game_area = if state.show_side_panel {
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(17), // Side panel area (half of previous 35%)
+                Constraint::Percentage(83), // Main game area
+            ])
+            .split(chunks[1]);
 
-    // Own grid
-    draw_grid(
-        f,
-        game_chunks[0],
-        &state.own_grid,
-        "Your Fleet",
-        state,
-        true,
-    );
+        let game_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_chunks[1]);
 
-    // Enemy grid
-    draw_grid(
-        f,
-        game_chunks[1],
-        &state.enemy_grid,
-        "Enemy Waters",
-        state,
-        false,
-    );
+        // Draw side panel first (left side)
+        draw_side_panel(f, main_chunks[0], state);
+
+        // Own grid
+        draw_grid(
+            f,
+            game_chunks[0],
+            &state.own_grid,
+            "Your Fleet",
+            state,
+            true,
+        );
+        // Enemy grid
+        draw_grid(
+            f,
+            game_chunks[1],
+            &state.enemy_grid,
+            "Enemy Waters",
+            state,
+            false,
+        );
+
+        chunks[2] // Return messages area
+    } else {
+        let game_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[1]);
+
+        // Own grid
+        draw_grid(
+            f,
+            game_chunks[0],
+            &state.own_grid,
+            "Your Fleet",
+            state,
+            true,
+        );
+        // Enemy grid
+        draw_grid(
+            f,
+            game_chunks[1],
+            &state.enemy_grid,
+            "Enemy Waters",
+            state,
+            false,
+        );
+
+        chunks[2] // Return messages area
+    };
 
     // Messages
     let msg_items: Vec<ListItem> = state
@@ -80,7 +120,7 @@ pub fn draw_ui(f: &mut Frame, state: &GameState) {
         .map(|m| ListItem::new(m.clone()))
         .collect();
     let msgs = List::new(msg_items).block(Block::default().borders(Borders::ALL).title("Messages"));
-    f.render_widget(msgs, chunks[2]);
+    f.render_widget(msgs, game_area);
 }
 
 fn draw_grid(
@@ -206,4 +246,81 @@ fn draw_grid(
         );
         f.render_widget(y_label, y_rect);
     }
+}
+
+fn draw_side_panel(f: &mut Frame, area: Rect, state: &GameState) {
+    // Note: Ship status should be updated before drawing
+    // This is handled in the client when receiving attack results
+
+    let panel_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(12), // Ship status
+            Constraint::Length(8),  // Stats
+            Constraint::Min(0),     // Spacer
+        ])
+        .split(area);
+
+    // Ship Status Section
+    let ship_lines: Vec<String> = state
+        .ship_status
+        .iter()
+        .map(|ship| {
+            let ship_visual = "■".repeat(ship.length);
+
+            if ship.sunk {
+                format!("{}  ~~{}~~", ship_visual, ship.name)
+            } else {
+                format!("{}  {}", ship_visual, ship.name)
+            }
+        })
+        .collect();
+
+    let ship_status_text = ship_lines.join("\n");
+    let ship_block = Block::default()
+        .borders(Borders::ALL)
+        .title("🚢 Your Fleet")
+        .title_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let ship_para = Paragraph::new(ship_status_text)
+        .style(Style::default().fg(Color::White))
+        .block(ship_block);
+    f.render_widget(ship_para, panel_chunks[0]);
+
+    // Stats Section
+    let accuracy = state.get_accuracy();
+    let avg_time = state.get_avg_turn_time();
+    let ships_sunk = state.get_ships_sunk();
+
+    let stats_text = format!(
+        "Turns: {} | Avg Time: {:.1}s\n\
+        Accuracy: {:.0}% | Sunk: {}/5\n\
+        Shots: {} | Hits: {}",
+        state.turn_count, avg_time, accuracy, ships_sunk, state.total_shots, state.total_hits
+    );
+
+    let stats_block = Block::default()
+        .borders(Borders::ALL)
+        .title("📊 Statistics")
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let stats_para = Paragraph::new(stats_text)
+        .style(Style::default().fg(Color::White))
+        .block(stats_block);
+    f.render_widget(stats_para, panel_chunks[1]);
+
+    // Help text
+    let help_text = "Press 'S' to toggle\nthis side panel";
+    let help_para = Paragraph::new(help_text)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    f.render_widget(help_para, panel_chunks[2]);
 }

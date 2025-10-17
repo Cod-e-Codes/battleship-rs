@@ -1,4 +1,13 @@
-use crate::types::{CellState, GRID_SIZE, GamePhase};
+use crate::types::{CellState, GRID_SIZE, GamePhase, SHIPS};
+use std::time::Instant;
+
+#[derive(Debug, Clone)]
+pub struct ShipStatus {
+    pub name: String,
+    pub length: usize,
+    pub hits: usize,
+    pub sunk: bool,
+}
 
 pub struct GameState {
     pub own_grid: Vec<Vec<CellState>>,
@@ -9,10 +18,28 @@ pub struct GameState {
     pub placing_horizontal: bool,
     pub messages: Vec<String>,
     pub winner: Option<bool>,
+    // Side panel and stats
+    pub show_side_panel: bool,
+    pub ship_status: Vec<ShipStatus>,
+    pub total_shots: usize,
+    pub total_hits: usize,
+    pub turn_count: usize,
+    pub turn_start_time: Option<Instant>,
+    pub turn_times: Vec<f64>, // Store last 10 turn times
 }
 
 impl GameState {
     pub fn new() -> Self {
+        let mut ship_status = Vec::new();
+        for (length, name) in SHIPS.iter() {
+            ship_status.push(ShipStatus {
+                name: name.to_string(),
+                length: *length,
+                hits: 0,
+                sunk: false,
+            });
+        }
+
         Self {
             own_grid: vec![vec![CellState::Empty; GRID_SIZE]; GRID_SIZE],
             enemy_grid: vec![vec![CellState::Empty; GRID_SIZE]; GRID_SIZE],
@@ -22,6 +49,14 @@ impl GameState {
             placing_horizontal: true,
             messages: vec!["Place your ships! Use arrows, R to rotate, Enter to place".to_string()],
             winner: None,
+            // Side panel and stats
+            show_side_panel: false,
+            ship_status,
+            total_shots: 0,
+            total_hits: 0,
+            turn_count: 0,
+            turn_start_time: None,
+            turn_times: Vec::new(),
         }
     }
 
@@ -133,5 +168,78 @@ impl GameState {
             }
             true
         }
+    }
+
+    // Statistics and overlay methods
+    pub fn start_turn(&mut self) {
+        self.turn_start_time = Some(Instant::now());
+    }
+
+    pub fn end_turn(&mut self) {
+        if let Some(start_time) = self.turn_start_time {
+            let duration = start_time.elapsed().as_secs_f64();
+            self.turn_times.push(duration);
+            if self.turn_times.len() > 10 {
+                self.turn_times.remove(0); // Keep only last 10 turns
+            }
+        }
+        self.turn_start_time = None;
+    }
+
+    pub fn record_shot(&mut self, hit: bool) {
+        self.total_shots += 1;
+        if hit {
+            self.total_hits += 1;
+        }
+    }
+
+    pub fn update_ship_status(&mut self) {
+        // Count hits on each ship by analyzing the grid
+        for ship in &mut self.ship_status {
+            ship.hits = 0;
+            ship.sunk = false;
+        }
+
+        // Simple approach: count all hits on own grid and distribute to ships
+        // This is a simplified version - in a real implementation you'd track ship positions
+        let total_hits = self
+            .own_grid
+            .iter()
+            .flatten()
+            .filter(|&&cell| cell == CellState::Hit)
+            .count();
+
+        // Distribute hits across ships (this is simplified - real implementation would track exact positions)
+        let mut remaining_hits = total_hits;
+        for ship in &mut self.ship_status {
+            if remaining_hits >= ship.length {
+                ship.hits = ship.length;
+                ship.sunk = true;
+                remaining_hits -= ship.length;
+            } else {
+                ship.hits = remaining_hits;
+                remaining_hits = 0;
+            }
+        }
+    }
+
+    pub fn get_accuracy(&self) -> f64 {
+        if self.total_shots == 0 {
+            0.0
+        } else {
+            (self.total_hits as f64 / self.total_shots as f64) * 100.0
+        }
+    }
+
+    pub fn get_avg_turn_time(&self) -> f64 {
+        if self.turn_times.is_empty() {
+            0.0
+        } else {
+            self.turn_times.iter().sum::<f64>() / self.turn_times.len() as f64
+        }
+    }
+
+    pub fn get_ships_sunk(&self) -> usize {
+        self.ship_status.iter().filter(|ship| ship.sunk).count()
     }
 }

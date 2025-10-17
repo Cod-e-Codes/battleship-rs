@@ -73,7 +73,18 @@ cargo run --release -- client your-server-ip:8080
 - Arrow keys: Move cursor
 - R: Rotate ship during placement
 - Enter: Place ship / Fire at position
+- S: Toggle side panel (ship status & statistics)
 - Q: Quit
+
+## Side Panel
+
+Press S during gameplay to toggle the side panel, which displays:
+
+- Ship status with visual length indicators and hit tracking
+- Game statistics including turn count, accuracy, and ships sunk
+- Real-time updates as the game progresses
+
+The side panel can be toggled on/off to avoid cluttering the main game view.
 
 ## Game Rules
 
