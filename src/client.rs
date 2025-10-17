@@ -1,0 +1,144 @@
+use anyhow::Result;
+use crossterm::{
+    event::{self, Event, KeyEventKind},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::{
+    io::{self, BufRead, BufReader, Write},
+    net::TcpStream,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio::sync::mpsc;
+
+use crate::game_state::GameState;
+use crate::input::handle_key_event;
+use crate::types::{CellState, GamePhase, Message};
+use crate::ui::draw_ui;
+
+pub async fn run_client(addr: &str) -> Result<()> {
+    let stream = TcpStream::connect(addr)?;
+    stream.set_nonblocking(true)?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut writer = stream;
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let state = Arc::new(Mutex::new(GameState::new()));
+    let state_clone = state.clone();
+
+    // Network receiver thread
+    tokio::spawn(async move {
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if let Ok(msg) = serde_json::from_str::<Message>(&line) {
+                        let mut state = state_clone.lock().unwrap();
+                        match msg {
+                            Message::WaitingForOpponent => {
+                                state
+                                    .messages
+                                    .push("Waiting for opponent to place ships...".to_string());
+                            }
+                            Message::GameStart => {
+                                state.messages.push("Game starting!".to_string());
+                            }
+                            Message::YourTurn => {
+                                state.phase = GamePhase::YourTurn;
+                                state.messages.push("Your turn!".to_string());
+                            }
+                            Message::OpponentTurn => {
+                                state.phase = GamePhase::OpponentTurn;
+                                state.messages.push("Opponent's turn...".to_string());
+                            }
+                            Message::Attack { x, y } => {
+                                let hit = state.own_grid[y][x] == CellState::Ship;
+                                state.own_grid[y][x] =
+                                    if hit { CellState::Hit } else { CellState::Miss };
+                                if hit {
+                                    state
+                                        .messages
+                                        .push(format!("Enemy hit your ship at ({}, {})!", x, y));
+                                } else {
+                                    state
+                                        .messages
+                                        .push(format!("Enemy missed at ({}, {})", x, y));
+                                }
+                            }
+                            Message::AttackResult { x, y, hit, sunk } => {
+                                state.enemy_grid[y][x] =
+                                    if hit { CellState::Hit } else { CellState::Miss };
+                                if hit {
+                                    state.messages.push(if sunk {
+                                        format!("HIT at ({}, {})! Ship sunk!", x, y)
+                                    } else {
+                                        format!("HIT at ({}, {})!", x, y)
+                                    });
+                                } else {
+                                    state.messages.push(format!("Miss at ({}, {})", x, y));
+                                }
+                            }
+                            Message::GameOver { won } => {
+                                state.phase = GamePhase::GameOver;
+                                state.winner = Some(won);
+                                state.messages.push(if won {
+                                    "🎉 YOU WIN! 🎉".to_string()
+                                } else {
+                                    "💀 YOU LOSE! 💀".to_string()
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Network sender
+    tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            let json = serde_json::to_string(&msg).unwrap() + "\n";
+            let _ = writer.write_all(json.as_bytes());
+        }
+    });
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    loop {
+        terminal.draw(|f| {
+            let state = state.lock().unwrap();
+            draw_ui(f, &state);
+        })?;
+
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            let should_quit = {
+                let mut state = state.lock().unwrap();
+                handle_key_event(&mut state, key, &tx)
+            };
+            if should_quit {
+                break;
+            }
+        }
+    }
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    Ok(())
+}
