@@ -50,23 +50,56 @@ pub async fn run_client(addr: &str) -> Result<()> {
                                 state.phase = GamePhase::YourTurn;
                                 state.turn_count += 1;
                                 state.start_turn();
+
+                                // Deactivate shield after one turn
+                                if state.shield_active {
+                                    state.deactivate_shield();
+                                }
+
                                 state.messages.push("Your turn!".to_string());
                             }
                             Message::OpponentTurn => {
                                 state.end_turn();
                                 state.phase = GamePhase::OpponentTurn;
+
+                                // Clear radar reveals after one turn
+                                if !state.radar_reveals.is_empty() {
+                                    state.clear_radar_reveals();
+                                }
+
                                 state.messages.push("Opponent's turn...".to_string());
                             }
                             Message::Attack { x, y } => {
                                 let hit = state.own_grid[y][x] == CellState::Ship;
-                                state.own_grid[y][x] =
-                                    if hit { CellState::Hit } else { CellState::Miss };
-                                if hit {
+                                let mut actual_hit = hit;
+
+                                // Check if shield is active and this would be a hit
+                                if hit && state.shield_active {
+                                    // 50% chance to block damage with shield
+                                    use rand::Rng;
+                                    let mut rng = rand::rng();
+                                    if rng.random_range(0..2) == 0 {
+                                        // Shield blocked the hit
+                                        actual_hit = false; // Treat as miss for game logic
+                                        state.messages.push(format!(
+                                            "🛡️ Shield blocked enemy attack at {}!",
+                                            crate::game_state::GameState::format_coordinate(x, y)
+                                        ));
+                                    }
+                                }
+
+                                state.own_grid[y][x] = if actual_hit {
+                                    CellState::Hit
+                                } else {
+                                    CellState::Miss
+                                };
+                                if actual_hit {
                                     state.messages.push(format!(
                                         "Enemy hit your ship at {}!",
                                         crate::game_state::GameState::format_coordinate(x, y)
                                     ));
-                                } else {
+                                } else if !hit {
+                                    // Only show "missed" message if it wasn't a shield block
                                     state.messages.push(format!(
                                         "Enemy missed at {}",
                                         crate::game_state::GameState::format_coordinate(x, y)
@@ -91,6 +124,13 @@ pub async fn run_client(addr: &str) -> Result<()> {
                                             crate::game_state::GameState::format_coordinate(x, y)
                                         )
                                     });
+
+                                    // Draw a card for hitting/sinking
+                                    if let Some(card) = state.draw_card() {
+                                        state
+                                            .messages
+                                            .push(format!("🃏 Drew {} card!", card.name()));
+                                    }
                                 } else {
                                     state.messages.push(format!(
                                         "Miss at {}",
@@ -140,6 +180,119 @@ pub async fn run_client(addr: &str) -> Result<()> {
                                 state
                                     .messages
                                     .push("New game starting! Place your ships.".to_string());
+                            }
+                            Message::LastStandTrigger => {
+                                state.phase = GamePhase::LastStand;
+                                state.trigger_last_stand();
+                                state.messages.push("⚡ LAST STAND CHANCE! ⚡".to_string());
+                            }
+                            Message::LastStandResult { success } => {
+                                if success {
+                                    state
+                                        .messages
+                                        .push("Last Stand successful! Ship restored!".to_string());
+                                    // Server will send updated grid state
+                                } else {
+                                    state
+                                        .messages
+                                        .push("Last Stand failed! Game over!".to_string());
+                                    state.phase = GamePhase::GameOver;
+                                }
+                            }
+                            Message::CardDrawn { card } => {
+                                state.current_hand.push(card.clone());
+                                state
+                                    .messages
+                                    .push(format!("🃏 Drew {} card!", card.name()));
+                            }
+                            Message::CardEffect { effect_type, data } => {
+                                match effect_type.as_str() {
+                                    "shield_activated" => {
+                                        state.activate_shield();
+                                    }
+                                    "shield_expired" => {
+                                        state.deactivate_shield();
+                                    }
+                                    "radar_reveal" => {
+                                        // Parse radar reveal data
+                                        if let Some((x, y)) = data.split_once(',')
+                                            && let (Ok(x), Ok(y)) =
+                                                (x.parse::<usize>(), y.parse::<usize>())
+                                        {
+                                            state.radar_reveals.push((x, y));
+                                            state.messages.push(format!(
+                                                "📡 Radar revealed ship at {}!",
+                                                crate::game_state::GameState::format_coordinate(
+                                                    x, y
+                                                )
+                                            ));
+                                        }
+                                    }
+                                    "missile_strike" => {
+                                        // Parse missile strike data (format: "x,y,result")
+                                        // Temporary debug: log to file instead of stdout
+                                        use std::fs::OpenOptions;
+                                        use std::io::Write;
+                                        if let Ok(mut file) = OpenOptions::new()
+                                            .create(true)
+                                            .append(true)
+                                            .open("debug.log")
+                                        {
+                                            let _ = writeln!(file, "Missile data: '{}'", data);
+                                        }
+                                        if let Some((xy, result)) = data.split_once(',')
+                                            && let Some((x_str, y_str)) = xy.split_once(',')
+                                            && let (Ok(x), Ok(y)) =
+                                                (x_str.parse::<usize>(), y_str.parse::<usize>())
+                                        {
+                                            // Debug: log successful parsing
+                                            use std::fs::OpenOptions;
+                                            use std::io::Write;
+                                            if let Ok(mut file) = OpenOptions::new()
+                                                .create(true)
+                                                .append(true)
+                                                .open("debug.log")
+                                            {
+                                                let _ = writeln!(
+                                                    file,
+                                                    "Parsed: x={}, y={}, result={}",
+                                                    x, y, result
+                                                );
+                                            }
+                                            // Update enemy grid based on result
+                                            state.enemy_grid[y][x] = if result == "hit" {
+                                                CellState::Hit
+                                            } else {
+                                                CellState::Miss
+                                            };
+
+                                            let result_text =
+                                                if result == "hit" { "hit" } else { "missed" };
+                                            state.messages.push(format!(
+                                                "🚀 Missile strike {} at {}!",
+                                                result_text,
+                                                crate::game_state::GameState::format_coordinate(
+                                                    x, y
+                                                )
+                                            ));
+                                        }
+                                    }
+                                    "repair" => {
+                                        if state.repair_ship() {
+                                            state.messages.push("🔧 Ship repaired!".to_string());
+                                        } else {
+                                            state
+                                                .messages
+                                                .push("🔧 No damaged ships to repair!".to_string());
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            Message::GridUpdate { grid } => {
+                                // Update own grid (for missile strikes)
+                                state.own_grid = grid;
+                                state.messages.push("Grid updated!".to_string());
                             }
                             Message::Quit => {
                                 state.messages.push("You have quit the game.".to_string());

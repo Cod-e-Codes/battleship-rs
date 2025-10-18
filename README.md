@@ -9,6 +9,8 @@ Terminal-based networked Battleship game written in Rust.
 - Two-player networked gameplay over TCP
 - Single-player mode against AI opponent
 - Relay server mode for remote play
+- **Power-up card system** - draw cards by hitting ships, use strategic abilities
+- **Last Stand mechanic** - morse code challenge for one final comeback chance
 - Play again functionality with timeout handling
 - Terminal UI using ratatui
 
@@ -74,19 +76,26 @@ cargo run --release -- client your-server-ip:8080
 - Arrow keys: Move cursor
 - R: Rotate ship during placement
 - Enter: Place ship / Fire at position
-- S: Toggle side panel (ship status & statistics)
+- S: Toggle side panel (statistics / power-up cards)
+- 1-5: Use power-up cards during your turn
+- . / -: Morse code input during Last Stand
 - Y/N: Play again (when prompted)
 - Q: Quit
 
-## Side Panel
+## Power-up Cards
 
-Press S during gameplay to toggle the side panel, which displays:
+Hit enemy ships to draw cards! Use them strategically during your turn:
 
-- Ship status with visual length indicators and hit tracking
-- Game statistics including turn count, accuracy, and ships sunk
-- Real-time updates as the game progresses
+- **🛡️ Shield**: 50% damage reduction for 1 turn
+- **📡 Radar**: Reveal 2 random enemy ship positions
+- **🔧 Repair**: Restore 1 HP to a damaged ship
+- **🚀 Missile Strike**: Hit 2 random enemy positions
 
-The side panel can be toggled on/off to avoid cluttering the main game view.
+Press S to view your hand, 1-5 to use cards.
+
+## Last Stand
+
+When your last ship is destroyed, you get one final chance! Complete the morse code sequence to restore a random ship and continue the battle.
 
 ## Game Rules
 
@@ -125,6 +134,8 @@ JSON messages over TCP, newline-delimited. Message types:
 - `Attack`: Fire at coordinates
 - `AttackResult`: Hit/miss/sunk feedback
 - `YourTurn` / `OpponentTurn`: Turn management
+- `CardDrawn` / `CardUsed` / `CardEffect`: Power-up system
+- `LastStandTrigger` / `LastStandResult`: Last Stand mechanic
 - `GameOver`: End game state
 - `PlayAgainRequest` / `PlayAgainResponse`: Play again functionality
 - `NewGameStart`: Reset for new game

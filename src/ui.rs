@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use crate::game_state::GameState;
-use crate::types::{CellState, GRID_SIZE, GamePhase, SHIPS};
+use crate::types::{CellState, GRID_SIZE, GamePhase, SHIPS, SidePanelMode};
 
 pub fn draw_ui(f: &mut Frame, state: &GameState) {
     let chunks = Layout::default()
@@ -58,7 +58,7 @@ pub fn draw_ui(f: &mut Frame, state: &GameState) {
     f.render_widget(title, chunks[0]);
 
     // Game area - adjust layout based on side panel visibility
-    let game_area = if state.show_side_panel {
+    let game_area = if state.side_panel_mode != SidePanelMode::Hidden {
         let main_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -133,6 +133,11 @@ pub fn draw_ui(f: &mut Frame, state: &GameState) {
         .collect();
     let msgs = List::new(msg_items).block(Block::default().borders(Borders::ALL).title("Messages"));
     f.render_widget(msgs, game_area);
+
+    // Draw Last Stand overlay if in Last Stand phase
+    if state.phase == GamePhase::LastStand {
+        draw_last_stand_overlay(f, f.area(), state);
+    }
 }
 
 fn draw_grid(
@@ -181,12 +186,33 @@ fn draw_grid(
             let cell_rect = Rect::new(cell_x, cell_y, cell_width, cell_height);
 
             let (symbol, style) = match grid[y][x] {
-                CellState::Empty => ("~", Style::default().fg(Color::Blue)),
+                CellState::Empty => {
+                    if !is_own && state.radar_reveals.contains(&(x, y)) {
+                        (
+                            "?",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        ("~", Style::default().fg(Color::Blue))
+                    }
+                }
                 CellState::Ship => {
                     if is_own {
                         ("■", Style::default().fg(Color::Green))
                     } else {
-                        ("~", Style::default().fg(Color::Blue))
+                        // Check if this position is revealed by radar
+                        if state.radar_reveals.contains(&(x, y)) {
+                            (
+                                "■",
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                        } else {
+                            ("~", Style::default().fg(Color::Blue))
+                        }
                     }
                 }
                 CellState::Hit => (
@@ -264,6 +290,14 @@ fn draw_grid(
 }
 
 fn draw_side_panel(f: &mut Frame, area: Rect, state: &GameState) {
+    match state.side_panel_mode {
+        SidePanelMode::Statistics => draw_statistics_panel(f, area, state),
+        SidePanelMode::Deck => draw_deck_panel(f, area, state),
+        SidePanelMode::Hidden => {} // Nothing to draw
+    }
+}
+
+fn draw_statistics_panel(f: &mut Frame, area: Rect, state: &GameState) {
     // Note: Ship status should be updated before drawing
     // This is handled in the client when receiving attack results
 
@@ -338,4 +372,172 @@ fn draw_side_panel(f: &mut Frame, area: Rect, state: &GameState) {
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
     f.render_widget(help_para, panel_chunks[2]);
+}
+
+fn draw_deck_panel(f: &mut Frame, area: Rect, state: &GameState) {
+    let panel_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // Cards list
+            Constraint::Length(3), // Help text
+        ])
+        .split(area);
+
+    // Cards Section
+    if state.current_hand.is_empty() {
+        let empty_text = "No cards yet!\n\nHit enemy ships\nto draw cards!";
+        let deck_block = Block::default()
+            .borders(Borders::ALL)
+            .title("🃏 Power-ups")
+            .title_style(
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            );
+
+        let deck_para = Paragraph::new(empty_text)
+            .style(Style::default().fg(Color::White))
+            .alignment(Alignment::Center)
+            .block(deck_block);
+        f.render_widget(deck_para, panel_chunks[0]);
+    } else {
+        // Create list of cards
+        let card_items: Vec<ListItem> = state
+            .current_hand
+            .iter()
+            .enumerate()
+            .map(|(i, card)| {
+                let card_text = format!(
+                    "{} {}: {}\n   {}",
+                    i + 1,
+                    card.emoji(),
+                    card.name(),
+                    card.description()
+                );
+                ListItem::new(card_text).style(Style::default().fg(Color::White))
+            })
+            .collect();
+
+        // Add status indicators
+        let mut status_items = card_items;
+        if state.shield_active {
+            status_items.push(
+                ListItem::new("🛡️ SHIELD ACTIVE!").style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            );
+        }
+        if !state.radar_reveals.is_empty() {
+            status_items.push(
+                ListItem::new(format!(
+                    "📡 RADAR: {} positions revealed",
+                    state.radar_reveals.len()
+                ))
+                .style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            );
+        }
+
+        let cards_list = List::new(status_items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("🃏 Power-ups")
+                .title_style(
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+        );
+
+        f.render_widget(cards_list, panel_chunks[0]);
+    }
+
+    // Help text
+    let help_text = if state.current_hand.is_empty() {
+        "Press 'S' to toggle\nthis side panel"
+    } else {
+        "Press 1-5 to use\ncards, 'S' to toggle"
+    };
+    let help_para = Paragraph::new(help_text)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    f.render_widget(help_para, panel_chunks[1]);
+}
+
+fn draw_last_stand_overlay(f: &mut Frame, area: Rect, state: &GameState) {
+    // Create a semi-transparent overlay
+    let overlay = Paragraph::new("").style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+    );
+    f.render_widget(overlay, area);
+
+    // Center the Last Stand modal
+    let modal_width = 50;
+    let modal_height = 15;
+    let modal_x = (area.width.saturating_sub(modal_width)) / 2;
+    let modal_y = (area.height.saturating_sub(modal_height)) / 2;
+
+    let modal_area = Rect::new(modal_x, modal_y, modal_width, modal_height);
+
+    let modal_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Title
+            Constraint::Length(3), // Target sequence
+            Constraint::Length(3), // Current input
+            Constraint::Length(3), // Instructions
+            Constraint::Min(0),    // Spacer
+        ])
+        .split(modal_area);
+
+    // Title
+    let title = Paragraph::new("⚡ LAST STAND! ⚡")
+        .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(title, modal_chunks[0]);
+
+    // Target sequence
+    let target_display: String = state
+        .last_stand_sequence
+        .iter()
+        .map(|&c| if c == '.' { "•" } else { "—" })
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    let target_text = format!("Target: {}", target_display);
+    let target = Paragraph::new(target_text)
+        .style(Style::default().fg(Color::Yellow))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(target, modal_chunks[1]);
+
+    // Current input
+    let input_display: String = state
+        .last_stand_input
+        .iter()
+        .map(|&c| if c == '.' { "•" } else { "—" })
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    let input_text = format!("Your input: {}", input_display);
+    let input = Paragraph::new(input_text)
+        .style(Style::default().fg(Color::Green))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(input, modal_chunks[2]);
+
+    // Instructions
+    let instructions = Paragraph::new("Type the morse code!\n(. for dot, - for dash)")
+        .style(Style::default().fg(Color::White))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(instructions, modal_chunks[3]);
 }

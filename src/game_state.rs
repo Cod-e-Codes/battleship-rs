@@ -1,4 +1,4 @@
-use crate::types::{CellState, GRID_SIZE, GamePhase, SHIPS};
+use crate::types::{CellState, GRID_SIZE, GamePhase, PowerUp, SHIPS, SidePanelMode};
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -19,7 +19,7 @@ pub struct GameState {
     pub messages: Vec<String>,
     pub winner: Option<bool>,
     // Side panel and stats
-    pub show_side_panel: bool,
+    pub side_panel_mode: SidePanelMode,
     pub ship_status: Vec<ShipStatus>,
     pub total_shots: usize,
     pub total_hits: usize,
@@ -29,6 +29,15 @@ pub struct GameState {
     // Play again functionality
     pub play_again_response: Option<bool>,
     pub waiting_for_play_again: bool,
+    // Last Stand mechanic
+    pub last_stand_used: bool,
+    pub last_stand_sequence: Vec<char>,
+    pub last_stand_input: Vec<char>,
+    // Power-ups
+    pub current_hand: Vec<PowerUp>,
+    pub max_hand_size: usize,
+    pub shield_active: bool,
+    pub radar_reveals: Vec<(usize, usize)>, // Coordinates revealed by radar
 }
 
 impl GameState {
@@ -53,7 +62,7 @@ impl GameState {
             messages: vec!["Place your ships! Use arrows, R to rotate, Enter to place".to_string()],
             winner: None,
             // Side panel and stats
-            show_side_panel: false,
+            side_panel_mode: SidePanelMode::Statistics,
             ship_status,
             total_shots: 0,
             total_hits: 0,
@@ -63,6 +72,15 @@ impl GameState {
             // Play again functionality
             play_again_response: None,
             waiting_for_play_again: false,
+            // Last Stand mechanic
+            last_stand_used: false,
+            last_stand_sequence: Vec::new(),
+            last_stand_input: Vec::new(),
+            // Power-ups
+            current_hand: Vec::new(),
+            max_hand_size: 5,
+            shield_active: false,
+            radar_reveals: Vec::new(),
         }
     }
 
@@ -247,5 +265,235 @@ impl GameState {
             ship.hits = 0;
             ship.sunk = false;
         }
+
+        // Reset Last Stand state
+        self.last_stand_used = false;
+        self.last_stand_sequence.clear();
+        self.last_stand_input.clear();
+
+        // Reset card state
+        self.current_hand.clear();
+        self.shield_active = false;
+        self.radar_reveals.clear();
+    }
+
+    // Last Stand methods
+    pub fn trigger_last_stand(&mut self) {
+        self.last_stand_used = true;
+        self.last_stand_input.clear();
+
+        // Generate a simple morse code sequence (S.O.S. variations)
+        let sequences = [
+            vec!['.', '.', '.', '-', '-', '-', '.', '.', '.'], // S.O.S.
+            vec!['.', '-', '.'],                               // S.O.S. short
+            vec!['.', '.', '-', '.', '-', '.'],                // S.O.S. medium
+        ];
+
+        // Pick a random sequence (for now, just use the first one)
+        self.last_stand_sequence = sequences[0].clone();
+    }
+
+    pub fn check_last_stand_input(&mut self, key: char) -> Option<bool> {
+        if key == '.' || key == '-' {
+            self.last_stand_input.push(key);
+
+            // Check if we have enough input
+            if self.last_stand_input.len() == self.last_stand_sequence.len() {
+                let success = self.last_stand_input == self.last_stand_sequence;
+                return Some(success);
+            }
+        }
+        None // Incomplete input
+    }
+
+    #[allow(dead_code)]
+    pub fn restore_random_ship(&mut self) -> bool {
+        // Find the smallest sunk ship to restore (Destroyer = 2 cells)
+        let (length, name) = SHIPS[4]; // Destroyer is the smallest
+
+        // Find all possible empty positions
+        let mut empty_positions = Vec::new();
+        for y in 0..GRID_SIZE {
+            for x in 0..GRID_SIZE {
+                if self.own_grid[y][x] == CellState::Empty {
+                    empty_positions.push((x, y));
+                }
+            }
+        }
+
+        if empty_positions.is_empty() {
+            return false; // No space to place ship
+        }
+
+        // Try to place the ship randomly
+        use rand::Rng;
+        use std::collections::HashSet;
+        let mut rng = rand::rng();
+        let mut tried_positions = HashSet::new();
+
+        while tried_positions.len() < empty_positions.len() {
+            let random_idx = rng.random_range(0..empty_positions.len());
+            let (x, y) = empty_positions[random_idx];
+
+            if tried_positions.contains(&(x, y)) {
+                continue;
+            }
+            tried_positions.insert((x, y));
+
+            // Try horizontal first, then vertical
+            for horizontal in [true, false] {
+                if self.can_place_ship(x, y, length, horizontal) {
+                    self.place_ship(x, y, length, horizontal);
+                    self.messages
+                        .push(format!("{} restored by Last Stand!", name));
+                    return true;
+                }
+            }
+        }
+
+        false // Couldn't place ship anywhere
+    }
+
+    // Card system methods
+    pub fn draw_card(&mut self) -> Option<PowerUp> {
+        if self.current_hand.len() >= self.max_hand_size {
+            return None; // Hand is full
+        }
+
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let card_types = [
+            PowerUp::Shield,
+            PowerUp::Radar,
+            PowerUp::Repair,
+            PowerUp::MissileStrike,
+        ];
+
+        let card = card_types[rng.random_range(0..card_types.len())].clone();
+        self.current_hand.push(card.clone());
+        Some(card)
+    }
+
+    pub fn use_card(&mut self, card_index: usize) -> Option<PowerUp> {
+        if card_index < self.current_hand.len() {
+            Some(self.current_hand.remove(card_index))
+        } else {
+            None
+        }
+    }
+
+    pub fn can_use_card(&self, card_index: usize) -> bool {
+        card_index < self.current_hand.len()
+    }
+
+    #[allow(dead_code)]
+    pub fn get_card_at(&self, index: usize) -> Option<&PowerUp> {
+        self.current_hand.get(index)
+    }
+
+    pub fn activate_shield(&mut self) {
+        self.shield_active = true;
+        self.messages
+            .push("🛡️ Shield activated! 50% damage reduction for 1 turn!".to_string());
+    }
+
+    pub fn deactivate_shield(&mut self) {
+        if self.shield_active {
+            self.shield_active = false;
+            self.messages.push("🛡️ Shield expired!".to_string());
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn reveal_radar_positions(&mut self, enemy_grid: &[Vec<CellState>]) -> Vec<(usize, usize)> {
+        let mut revealed = Vec::new();
+        use rand::Rng;
+        let mut rng = rand::rng();
+
+        // Find all ship positions on enemy grid
+        let mut ship_positions = Vec::new();
+        for (y, row) in enemy_grid.iter().enumerate() {
+            for (x, cell) in row.iter().enumerate() {
+                if *cell == CellState::Ship {
+                    ship_positions.push((x, y));
+                }
+            }
+        }
+
+        // Reveal up to 2 random ship positions
+        let reveal_count = ship_positions.len().min(2);
+        for _ in 0..reveal_count {
+            if !ship_positions.is_empty() {
+                let random_idx = rng.random_range(0..ship_positions.len());
+                let pos = ship_positions.remove(random_idx);
+                revealed.push(pos);
+            }
+        }
+
+        self.radar_reveals = revealed.clone();
+        self.messages
+            .push("📡 Radar scan complete! Enemy positions revealed!".to_string());
+        revealed
+    }
+
+    pub fn clear_radar_reveals(&mut self) {
+        if !self.radar_reveals.is_empty() {
+            self.radar_reveals.clear();
+            self.messages.push("📡 Radar scan expired!".to_string());
+        }
+    }
+
+    pub fn repair_ship(&mut self) -> bool {
+        // Find a damaged ship to repair
+        for y in 0..GRID_SIZE {
+            for x in 0..GRID_SIZE {
+                if self.own_grid[y][x] == CellState::Hit {
+                    // Check if this hit is part of a ship that's not fully sunk
+                    if !GameState::is_ship_sunk_at(&self.own_grid, x, y) {
+                        // Repair this hit (convert back to ship)
+                        self.own_grid[y][x] = CellState::Ship;
+                        self.messages.push("🔧 Ship repaired!".to_string());
+                        return true;
+                    }
+                }
+            }
+        }
+        false // No damaged ships to repair
+    }
+
+    #[allow(dead_code)]
+    pub fn missile_strike(&mut self, enemy_grid: &mut [Vec<CellState>]) -> Vec<(usize, usize)> {
+        let mut hits = Vec::new();
+        use rand::Rng;
+        let mut rng = rand::rng();
+
+        // Find all empty and ship positions
+        let mut targets = Vec::new();
+        for (y, row) in enemy_grid.iter().enumerate().take(GRID_SIZE) {
+            for (x, cell) in row.iter().enumerate().take(GRID_SIZE) {
+                if *cell == CellState::Empty || *cell == CellState::Ship {
+                    targets.push((x, y));
+                }
+            }
+        }
+
+        // Strike 2 random positions
+        for _ in 0..2 {
+            if !targets.is_empty() {
+                let random_idx = rng.random_range(0..targets.len());
+                let (x, y) = targets.remove(random_idx);
+                let was_ship = enemy_grid[y][x] == CellState::Ship;
+                enemy_grid[y][x] = if was_ship {
+                    CellState::Hit
+                } else {
+                    CellState::Miss
+                };
+                hits.push((x, y));
+            }
+        }
+
+        self.messages
+            .push("🚀 Missile strike launched!".to_string());
+        hits
     }
 }

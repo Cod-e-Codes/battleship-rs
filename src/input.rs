@@ -1,5 +1,5 @@
 use crate::game_state::GameState;
-use crate::types::{CellState, GRID_SIZE, GamePhase, Message, SHIPS};
+use crate::types::{CellState, GRID_SIZE, GamePhase, Message, SHIPS, SidePanelMode};
 use crossterm::event::{KeyCode, KeyEvent};
 use tokio::sync::mpsc;
 
@@ -100,7 +100,67 @@ pub fn handle_key_event(
                 }
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {
-                state.show_side_panel = !state.show_side_panel;
+                state.side_panel_mode = match state.side_panel_mode {
+                    SidePanelMode::Statistics => SidePanelMode::Deck,
+                    SidePanelMode::Deck => SidePanelMode::Statistics,
+                    SidePanelMode::Hidden => SidePanelMode::Statistics,
+                };
+            }
+            // Card usage (1-5 keys)
+            KeyCode::Char('1') => {
+                if state.can_use_card(0)
+                    && let Some(card) = state.use_card(0)
+                {
+                    let _ = tx.send(Message::CardUsed {
+                        card,
+                        target_x: None,
+                        target_y: None,
+                    });
+                }
+            }
+            KeyCode::Char('2') => {
+                if state.can_use_card(1)
+                    && let Some(card) = state.use_card(1)
+                {
+                    let _ = tx.send(Message::CardUsed {
+                        card,
+                        target_x: None,
+                        target_y: None,
+                    });
+                }
+            }
+            KeyCode::Char('3') => {
+                if state.can_use_card(2)
+                    && let Some(card) = state.use_card(2)
+                {
+                    let _ = tx.send(Message::CardUsed {
+                        card,
+                        target_x: None,
+                        target_y: None,
+                    });
+                }
+            }
+            KeyCode::Char('4') => {
+                if state.can_use_card(3)
+                    && let Some(card) = state.use_card(3)
+                {
+                    let _ = tx.send(Message::CardUsed {
+                        card,
+                        target_x: None,
+                        target_y: None,
+                    });
+                }
+            }
+            KeyCode::Char('5') => {
+                if state.can_use_card(4)
+                    && let Some(card) = state.use_card(4)
+                {
+                    let _ = tx.send(Message::CardUsed {
+                        card,
+                        target_x: None,
+                        target_y: None,
+                    });
+                }
             }
             KeyCode::Char('q') => {
                 let _ = tx.send(Message::Quit);
@@ -137,9 +197,48 @@ pub fn handle_key_event(
             }
             _ => {}
         },
+        GamePhase::LastStand => match key.code {
+            KeyCode::Char('.') => {
+                if let Some(result) = state.check_last_stand_input('.') {
+                    let _ = tx.send(Message::LastStandResult { success: result });
+                    if result {
+                        state
+                            .messages
+                            .push("Last Stand successful! Ship restored!".to_string());
+                    } else {
+                        state
+                            .messages
+                            .push("Last Stand failed! Game over!".to_string());
+                    }
+                }
+            }
+            KeyCode::Char('-') => {
+                if let Some(result) = state.check_last_stand_input('-') {
+                    let _ = tx.send(Message::LastStandResult { success: result });
+                    if result {
+                        state
+                            .messages
+                            .push("Last Stand successful! Ship restored!".to_string());
+                    } else {
+                        state
+                            .messages
+                            .push("Last Stand failed! Game over!".to_string());
+                    }
+                }
+            }
+            KeyCode::Char('q') => {
+                let _ = tx.send(Message::Quit);
+                return true;
+            }
+            _ => {}
+        },
         GamePhase::WaitingForOpponent | GamePhase::OpponentTurn => match key.code {
             KeyCode::Char('s') | KeyCode::Char('S') => {
-                state.show_side_panel = !state.show_side_panel;
+                state.side_panel_mode = match state.side_panel_mode {
+                    SidePanelMode::Statistics => SidePanelMode::Deck,
+                    SidePanelMode::Deck => SidePanelMode::Statistics,
+                    SidePanelMode::Hidden => SidePanelMode::Statistics,
+                };
             }
             KeyCode::Char('q') => {
                 let _ = tx.send(Message::Quit);

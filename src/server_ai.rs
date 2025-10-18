@@ -8,7 +8,77 @@ use std::{
 };
 
 use crate::game_state::GameState;
-use crate::types::{CellState, GRID_SIZE, Message, SHIPS};
+use crate::types::{CellState, GRID_SIZE, Message, PowerUp, SHIPS};
+
+fn ai_draw_card(ai_hand: &mut Vec<PowerUp>, rng: &mut impl rand::Rng) {
+    if ai_hand.len() < 5 {
+        let cards = [
+            PowerUp::Shield,
+            PowerUp::Radar,
+            PowerUp::Repair,
+            PowerUp::MissileStrike,
+        ];
+        let card = cards[rng.random_range(0..cards.len())].clone();
+        ai_hand.push(card);
+    }
+}
+
+// Helper function to check if a ship at position is fully sunk
+fn is_ship_fully_sunk(grid: &[Vec<CellState>], x: usize, y: usize) -> bool {
+    // Check if this position is part of a ship
+    if grid[y][x] != CellState::Hit {
+        return false;
+    }
+
+    // Check horizontal ship
+    let mut is_horizontal = false;
+    if (x > 0 && matches!(grid[y][x - 1], CellState::Ship | CellState::Hit))
+        || (x + 1 < GRID_SIZE && matches!(grid[y][x + 1], CellState::Ship | CellState::Hit))
+    {
+        is_horizontal = true;
+    }
+
+    if is_horizontal {
+        // Find leftmost part of ship
+        let mut left = x as isize;
+        while left > 0 && matches!(grid[y][left as usize - 1], CellState::Ship | CellState::Hit) {
+            left -= 1;
+        }
+        // Find rightmost part of ship
+        let mut right = x;
+        while right < GRID_SIZE - 1
+            && matches!(grid[y][right + 1], CellState::Ship | CellState::Hit)
+        {
+            right += 1;
+        }
+        // Check if all parts are Hit (fully sunk)
+        for i in left as usize..=right {
+            if grid[y][i] == CellState::Ship {
+                return false; // Still has undamaged parts
+            }
+        }
+        true
+    } else {
+        // Check vertical ship
+        let mut top = y as isize;
+        while top > 0 && matches!(grid[top as usize - 1][x], CellState::Ship | CellState::Hit) {
+            top -= 1;
+        }
+        let mut bottom = y;
+        while bottom < GRID_SIZE - 1
+            && matches!(grid[bottom + 1][x], CellState::Ship | CellState::Hit)
+        {
+            bottom += 1;
+        }
+        // Check if all parts are Hit (fully sunk)
+        for row in grid.iter().take(bottom + 1).skip(top as usize) {
+            if row[x] == CellState::Ship {
+                return false; // Still has undamaged parts
+            }
+        }
+        true
+    }
+}
 
 pub async fn run_server_ai(port: &str) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))?;
@@ -23,7 +93,6 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
         println!("\nShutting down AI server...");
     });
 
-    // Accept one client and play against it
     let (mut stream, addr) = loop {
         if *shutdown.lock().unwrap() {
             return Ok(());
@@ -49,6 +118,9 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
     // Generate AI's board
     let mut ai_grid = vec![vec![CellState::Empty; GRID_SIZE]; GRID_SIZE];
     let mut rng = rand::rng();
+
+    let mut ai_hand: Vec<PowerUp> = Vec::new();
+    let mut ai_shield_active = false;
 
     for (len, _name) in SHIPS {
         'place: loop {
@@ -101,17 +173,52 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                         Message::Attack { x, y } => {
                             // Player fired at AI
                             let hit = ai_grid[y][x] == CellState::Ship;
-                            if hit {
-                                ai_grid[y][x] = CellState::Hit;
+                            let mut actual_hit = hit;
+
+                            // Check if AI shield is active
+                            if hit && ai_shield_active && rng.random_range(0..2) == 0 {
+                                actual_hit = false;
+                                println!("🛡️ AI Shield blocked player attack at ({}, {})!", x, y);
                             }
-                            let sunk = if hit {
+
+                            // Update grid
+                            if actual_hit {
+                                ai_grid[y][x] = CellState::Hit;
+                            } else {
+                                ai_grid[y][x] = CellState::Miss;
+                            }
+
+                            let sunk = if actual_hit {
                                 GameState::is_ship_sunk_at(&ai_grid, x, y)
                             } else {
                                 false
                             };
 
-                            let reply = Message::AttackResult { x, y, hit, sunk };
+                            let reply = Message::AttackResult {
+                                x,
+                                y,
+                                hit: actual_hit,
+                                sunk,
+                            };
                             writeln!(stream, "{}", serde_json::to_string(&reply)?)?;
+
+                            if actual_hit {
+                                ai_draw_card(&mut ai_hand, &mut rng);
+
+                                // Player draws card
+                                let cards = [
+                                    PowerUp::Shield,
+                                    PowerUp::Radar,
+                                    PowerUp::Repair,
+                                    PowerUp::MissileStrike,
+                                ];
+                                let card = cards[rng.random_range(0..cards.len())].clone();
+                                let _ = writeln!(
+                                    stream,
+                                    "{}",
+                                    serde_json::to_string(&Message::CardDrawn { card })?
+                                );
+                            }
 
                             // Check if all AI ships are sunk
                             if GameState::all_ships_sunk(&ai_grid) {
@@ -120,15 +227,12 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                                     "{}",
                                     serde_json::to_string(&Message::GameOver { won: true })?
                                 )?;
-                                println!("Player wins!");
-
-                                // Ask if player wants to play again
+                                println!("Player wins! All AI ships sunk.");
                                 writeln!(
                                     stream,
                                     "{}",
                                     serde_json::to_string(&Message::PlayAgainRequest)?
                                 )?;
-                                println!("Asking player if they want to play again...");
                                 continue;
                             }
 
@@ -140,7 +244,110 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                                     serde_json::to_string(&Message::OpponentTurn)?
                                 )?;
 
-                                // Find untargeted cell
+                                // Deactivate AI shield
+                                if ai_shield_active {
+                                    ai_shield_active = false;
+                                    println!("🛡️ AI Shield expired!");
+                                }
+
+                                // AI uses cards strategically (only use repair if there's a valid target)
+                                if !ai_hand.is_empty() {
+                                    let card_index = rng.random_range(0..ai_hand.len());
+                                    let card = ai_hand[card_index].clone();
+
+                                    // Special handling for Repair - only use if valid
+                                    if matches!(card, PowerUp::Repair) {
+                                        // Check if there's a damaged ship that's not fully sunk
+                                        let has_valid_repair_target =
+                                            ai_grid.iter().enumerate().any(|(y, row)| {
+                                                row.iter().enumerate().any(|(x, &cell)| {
+                                                    cell == CellState::Hit
+                                                        && !is_ship_fully_sunk(&ai_grid, x, y)
+                                                })
+                                            });
+
+                                        if !has_valid_repair_target {
+                                            // Don't use repair card, skip to next turn
+                                            println!("🤖 AI has Repair but no valid targets");
+                                        } else {
+                                            // Remove and use the card
+                                            ai_hand.remove(card_index);
+
+                                            // Find a valid repair target first
+                                            let mut repair_target = None;
+                                            for (y, row) in
+                                                ai_grid.iter().enumerate().take(GRID_SIZE)
+                                            {
+                                                for (x, &cell) in
+                                                    row.iter().enumerate().take(GRID_SIZE)
+                                                {
+                                                    if cell == CellState::Hit
+                                                        && !is_ship_fully_sunk(&ai_grid, x, y)
+                                                    {
+                                                        repair_target = Some((x, y));
+                                                        break;
+                                                    }
+                                                }
+                                                if repair_target.is_some() {
+                                                    break;
+                                                }
+                                            }
+
+                                            // Apply repair if target found
+                                            if let Some((x, y)) = repair_target {
+                                                ai_grid[y][x] = CellState::Ship;
+                                                println!("🤖 AI used Repair at ({}, {})!", x, y);
+                                            }
+                                        }
+                                    } else {
+                                        // Use other cards normally
+                                        ai_hand.remove(card_index);
+
+                                        match card {
+                                            PowerUp::Shield => {
+                                                ai_shield_active = true;
+                                                println!("🤖 AI used Shield!");
+                                            }
+                                            PowerUp::Radar => {
+                                                println!("🤖 AI used Radar!");
+                                            }
+                                            PowerUp::MissileStrike => {
+                                                let mut targets = Vec::new();
+                                                for (y, row) in
+                                                    grid.iter().enumerate().take(GRID_SIZE)
+                                                {
+                                                    for (x, cell) in
+                                                        row.iter().enumerate().take(GRID_SIZE)
+                                                    {
+                                                        if *cell == CellState::Empty
+                                                            || *cell == CellState::Ship
+                                                        {
+                                                            targets.push((x, y));
+                                                        }
+                                                    }
+                                                }
+                                                for _ in 0..2 {
+                                                    if !targets.is_empty() {
+                                                        let random_idx =
+                                                            rng.random_range(0..targets.len());
+                                                        let (x, y) = targets.remove(random_idx);
+                                                        let was_ship =
+                                                            grid[y][x] == CellState::Ship;
+                                                        grid[y][x] = if was_ship {
+                                                            CellState::Hit
+                                                        } else {
+                                                            CellState::Miss
+                                                        };
+                                                    }
+                                                }
+                                                println!("🤖 AI used Missile Strike!");
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+
+                                // AI attacks
                                 let (sx, sy) = loop {
                                     let sx = rng.random_range(0..GRID_SIZE);
                                     let sy = rng.random_range(0..GRID_SIZE);
@@ -157,14 +364,12 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                                     grid[sy][sx] = CellState::Miss;
                                 }
 
-                                // Send attack to client
                                 writeln!(
                                     stream,
                                     "{}",
                                     serde_json::to_string(&Message::Attack { x: sx, y: sy })?
                                 )?;
 
-                                // Check if player lost
                                 if GameState::all_ships_sunk(grid) {
                                     writeln!(
                                         stream,
@@ -172,19 +377,126 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                                         serde_json::to_string(&Message::GameOver { won: false })?
                                     )?;
                                     println!("AI wins!");
-
-                                    // Ask if player wants to play again
                                     writeln!(
                                         stream,
                                         "{}",
                                         serde_json::to_string(&Message::PlayAgainRequest)?
                                     )?;
-                                    println!("Asking player if they want to play again...");
                                     continue;
                                 }
 
-                                // Back to player's turn
                                 writeln!(stream, "{}", serde_json::to_string(&Message::YourTurn)?)?;
+                            }
+                        }
+                        Message::CardUsed { card, .. } => {
+                            println!("Player used card: {:?}", card);
+                            match card {
+                                PowerUp::Shield => {
+                                    let _ = writeln!(
+                                        stream,
+                                        "{}",
+                                        serde_json::to_string(&Message::CardEffect {
+                                            effect_type: "shield_activated".to_string(),
+                                            data: "".to_string(),
+                                        })?
+                                    );
+                                }
+                                PowerUp::Radar => {
+                                    // Reveal actual unhit ship positions
+                                    let mut revealed_positions = Vec::new();
+                                    for (y, row) in ai_grid.iter().enumerate() {
+                                        for (x, cell) in row.iter().enumerate() {
+                                            if *cell == CellState::Ship {
+                                                revealed_positions.push((x, y));
+                                            }
+                                        }
+                                    }
+
+                                    use rand::seq::SliceRandom;
+                                    revealed_positions.shuffle(&mut rng);
+
+                                    let reveal_count = revealed_positions.len().min(2);
+                                    for (x, y) in revealed_positions.iter().take(reveal_count) {
+                                        let _ = writeln!(
+                                            stream,
+                                            "{}",
+                                            serde_json::to_string(&Message::CardEffect {
+                                                effect_type: "radar_reveal".to_string(),
+                                                data: format!("{},{}", x, y),
+                                            })?
+                                        );
+                                    }
+                                    println!(
+                                        "Player used Radar! Revealed {} positions",
+                                        reveal_count
+                                    );
+                                }
+                                PowerUp::Repair => {
+                                    let _ = writeln!(
+                                        stream,
+                                        "{}",
+                                        serde_json::to_string(&Message::CardEffect {
+                                            effect_type: "repair".to_string(),
+                                            data: "".to_string(),
+                                        })?
+                                    );
+                                }
+                                PowerUp::MissileStrike => {
+                                    let mut targets = Vec::new();
+                                    for (y, row) in ai_grid.iter().enumerate() {
+                                        for (x, cell) in row.iter().enumerate() {
+                                            if *cell == CellState::Empty || *cell == CellState::Ship
+                                            {
+                                                targets.push((x, y));
+                                            }
+                                        }
+                                    }
+
+                                    for _ in 0..2 {
+                                        if !targets.is_empty() {
+                                            let random_idx = rng.random_range(0..targets.len());
+                                            let (x, y) = targets.remove(random_idx);
+                                            let was_ship = ai_grid[y][x] == CellState::Ship;
+
+                                            if was_ship {
+                                                ai_grid[y][x] = CellState::Hit;
+                                            } else {
+                                                ai_grid[y][x] = CellState::Miss;
+                                            }
+
+                                            let _ = writeln!(
+                                                stream,
+                                                "{}",
+                                                serde_json::to_string(&Message::CardEffect {
+                                                    effect_type: "missile_strike".to_string(),
+                                                    data: format!(
+                                                        "{},{},{}",
+                                                        x,
+                                                        y,
+                                                        if was_ship { "hit" } else { "miss" }
+                                                    ),
+                                                })?
+                                            );
+                                        }
+                                    }
+
+                                    // Check for victory after missile strike
+                                    if GameState::all_ships_sunk(&ai_grid) {
+                                        writeln!(
+                                            stream,
+                                            "{}",
+                                            serde_json::to_string(&Message::GameOver {
+                                                won: true
+                                            })?
+                                        )?;
+                                        println!("Player wins! All AI ships sunk.");
+                                        writeln!(
+                                            stream,
+                                            "{}",
+                                            serde_json::to_string(&Message::PlayAgainRequest)?
+                                        )?;
+                                    }
+                                }
                             }
                         }
                         Message::PlaceShips(client_grid) => {
@@ -197,8 +509,9 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                             if wants_to_play {
                                 println!("Player wants to play again! Starting new game...");
 
-                                // Reset AI's board
+                                // Reset everything
                                 ai_grid = vec![vec![CellState::Empty; GRID_SIZE]; GRID_SIZE];
+
                                 for (len, _name) in SHIPS {
                                     'place: loop {
                                         let x = rng.random_range(0..GRID_SIZE);
@@ -233,22 +546,19 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                                     }
                                 }
 
-                                // Reset AI's firing grid
                                 ai_fired = vec![vec![false; GRID_SIZE]; GRID_SIZE];
-
-                                // Reset player grid
+                                ai_hand.clear();
+                                ai_shield_active = false;
                                 player_grid = None;
 
-                                // Notify client that new game is starting
                                 let _ = writeln!(
                                     stream,
                                     "{}",
                                     serde_json::to_string(&Message::NewGameStart)?
                                 );
-
-                                println!("New game ready! Waiting for player to place ships...");
+                                println!("New game ready!");
                             } else {
-                                println!("Player doesn't want to play again. Ending session.");
+                                println!("Player doesn't want to play again.");
                                 break;
                             }
                         }
