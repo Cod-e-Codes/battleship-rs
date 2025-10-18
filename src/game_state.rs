@@ -75,21 +75,6 @@ impl GameState {
                 if self.own_grid[y][x + i] != CellState::Empty {
                     return false;
                 }
-                // Check adjacent cells
-                for dy in -1i32..=1 {
-                    for dx in -1i32..=1 {
-                        let ny = y as i32 + dy;
-                        let nx = (x + i) as i32 + dx;
-                        if ny >= 0
-                            && ny < GRID_SIZE as i32
-                            && nx >= 0
-                            && nx < GRID_SIZE as i32
-                            && self.own_grid[ny as usize][nx as usize] == CellState::Ship
-                        {
-                            return false;
-                        }
-                    }
-                }
             }
         } else {
             if y + length > GRID_SIZE {
@@ -98,20 +83,6 @@ impl GameState {
             for i in 0..length {
                 if self.own_grid[y + i][x] != CellState::Empty {
                     return false;
-                }
-                for dy in -1i32..=1 {
-                    for dx in -1i32..=1 {
-                        let ny = (y + i) as i32 + dy;
-                        let nx = x as i32 + dx;
-                        if ny >= 0
-                            && ny < GRID_SIZE as i32
-                            && nx >= 0
-                            && nx < GRID_SIZE as i32
-                            && self.own_grid[ny as usize][nx as usize] == CellState::Ship
-                        {
-                            return false;
-                        }
-                    }
                 }
             }
         }
@@ -247,6 +218,10 @@ impl GameState {
 
     pub fn get_ships_sunk(&self) -> usize {
         self.ship_status.iter().filter(|ship| ship.sunk).count()
+    }
+
+    pub fn format_coordinate(x: usize, y: usize) -> String {
+        format!("{}{}", (b'A' + y as u8) as char, x + 1)
     }
 
     pub fn reset_for_new_game(&mut self) {

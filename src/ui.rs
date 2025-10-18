@@ -240,7 +240,8 @@ fn draw_grid(
 
     // Draw coordinates
     for i in 0..GRID_SIZE {
-        let x_label = Paragraph::new(format!("{}", i)).alignment(Alignment::Center);
+        // Horizontal axis: numbers 1-10
+        let x_label = Paragraph::new(format!("{}", i + 1)).alignment(Alignment::Center);
         let x_rect = Rect::new(
             inner.x + 1 + (i as u16 + 1) * cell_width,
             inner.y,
@@ -249,7 +250,9 @@ fn draw_grid(
         );
         f.render_widget(x_label, x_rect);
 
-        let y_label = Paragraph::new(format!("{}", i)).alignment(Alignment::Center);
+        // Vertical axis: letters A-J
+        let y_label =
+            Paragraph::new(format!("{}", (b'A' + i as u8) as char)).alignment(Alignment::Center);
         let y_rect = Rect::new(
             inner.x,
             inner.y + 1 + i as u16 * cell_height,

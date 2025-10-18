@@ -10,12 +10,48 @@ pub fn handle_key_event(
 ) -> bool {
     match state.phase {
         GamePhase::Placing => match key.code {
-            KeyCode::Up => state.cursor.1 = state.cursor.1.saturating_sub(1),
-            KeyCode::Down => state.cursor.1 = (state.cursor.1 + 1).min(GRID_SIZE - 1),
-            KeyCode::Left => state.cursor.0 = state.cursor.0.saturating_sub(1),
-            KeyCode::Right => state.cursor.0 = (state.cursor.0 + 1).min(GRID_SIZE - 1),
+            KeyCode::Up => {
+                state.cursor.1 = state.cursor.1.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                let max_y = if state.placing_ship_idx < SHIPS.len() && !state.placing_horizontal {
+                    let (length, _) = SHIPS[state.placing_ship_idx];
+                    GRID_SIZE.saturating_sub(length)
+                } else {
+                    GRID_SIZE - 1
+                };
+                state.cursor.1 = (state.cursor.1 + 1).min(max_y);
+            }
+            KeyCode::Left => {
+                state.cursor.0 = state.cursor.0.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                let max_x = if state.placing_ship_idx < SHIPS.len() && state.placing_horizontal {
+                    let (length, _) = SHIPS[state.placing_ship_idx];
+                    GRID_SIZE.saturating_sub(length)
+                } else {
+                    GRID_SIZE - 1
+                };
+                state.cursor.0 = (state.cursor.0 + 1).min(max_x);
+            }
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 state.placing_horizontal = !state.placing_horizontal;
+
+                // Adjust cursor if rotation would put ship out of bounds
+                if state.placing_ship_idx < SHIPS.len() {
+                    let (length, _) = SHIPS[state.placing_ship_idx];
+                    if state.placing_horizontal {
+                        // Now horizontal - check if ship would extend beyond right edge
+                        if state.cursor.0 + length > GRID_SIZE {
+                            state.cursor.0 = GRID_SIZE.saturating_sub(length);
+                        }
+                    } else {
+                        // Now vertical - check if ship would extend beyond bottom edge
+                        if state.cursor.1 + length > GRID_SIZE {
+                            state.cursor.1 = GRID_SIZE.saturating_sub(length);
+                        }
+                    }
+                }
             }
             KeyCode::Enter => {
                 if state.placing_ship_idx < SHIPS.len() {
@@ -57,7 +93,10 @@ pub fn handle_key_event(
                 if state.enemy_grid[y][x] == CellState::Empty {
                     let _ = tx.send(Message::Attack { x, y });
                     state.phase = GamePhase::OpponentTurn;
-                    state.messages.push(format!("Firing at ({}, {})...", x, y));
+                    state.messages.push(format!(
+                        "Firing at {}...",
+                        crate::game_state::GameState::format_coordinate(x, y)
+                    ));
                 }
             }
             KeyCode::Char('s') | KeyCode::Char('S') => {

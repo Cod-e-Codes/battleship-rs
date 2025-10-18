@@ -93,7 +93,7 @@ The side panel can be toggled on/off to avoid cluttering the main game view.
 - Standard Battleship rules
 - 10x10 grid
 - 5 ships: Carrier (5), Battleship (4), Cruiser (3), Submarine (3), Destroyer (2)
-- Ships cannot touch (including diagonally)
+- Ships cannot overlap
 - Players alternate turns after placement phase
 - First to sink all opponent ships wins
 

@@ -62,13 +62,15 @@ pub async fn run_client(addr: &str) -> Result<()> {
                                 state.own_grid[y][x] =
                                     if hit { CellState::Hit } else { CellState::Miss };
                                 if hit {
-                                    state
-                                        .messages
-                                        .push(format!("Enemy hit your ship at ({}, {})!", x, y));
+                                    state.messages.push(format!(
+                                        "Enemy hit your ship at {}!",
+                                        crate::game_state::GameState::format_coordinate(x, y)
+                                    ));
                                 } else {
-                                    state
-                                        .messages
-                                        .push(format!("Enemy missed at ({}, {})", x, y));
+                                    state.messages.push(format!(
+                                        "Enemy missed at {}",
+                                        crate::game_state::GameState::format_coordinate(x, y)
+                                    ));
                                 }
                             }
                             Message::AttackResult { x, y, hit, sunk } => {
@@ -79,12 +81,21 @@ pub async fn run_client(addr: &str) -> Result<()> {
 
                                 if hit {
                                     state.messages.push(if sunk {
-                                        format!("HIT at ({}, {})! Ship sunk!", x, y)
+                                        format!(
+                                            "HIT at {}! Ship sunk!",
+                                            crate::game_state::GameState::format_coordinate(x, y)
+                                        )
                                     } else {
-                                        format!("HIT at ({}, {})!", x, y)
+                                        format!(
+                                            "HIT at {}!",
+                                            crate::game_state::GameState::format_coordinate(x, y)
+                                        )
                                     });
                                 } else {
-                                    state.messages.push(format!("Miss at ({}, {})", x, y));
+                                    state.messages.push(format!(
+                                        "Miss at {}",
+                                        crate::game_state::GameState::format_coordinate(x, y)
+                                    ));
                                 }
                             }
                             Message::GameOver { won } => {

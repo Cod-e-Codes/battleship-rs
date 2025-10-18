@@ -170,9 +170,8 @@ pub async fn run_server(port: &str) -> Result<()> {
                                 )?;
 
                                 println!(
-                                    "Player 1 attacked ({}, {}) - {}",
-                                    x,
-                                    y,
+                                    "Player 1 attacked {} - {}",
+                                    crate::game_state::GameState::format_coordinate(x, y),
                                     if hit { "HIT" } else { "MISS" }
                                 );
 
@@ -343,9 +342,8 @@ pub async fn run_server(port: &str) -> Result<()> {
                                 )?;
 
                                 println!(
-                                    "Player 2 attacked ({}, {}) - {}",
-                                    x,
-                                    y,
+                                    "Player 2 attacked {} - {}",
+                                    crate::game_state::GameState::format_coordinate(x, y),
                                     if hit { "HIT" } else { "MISS" }
                                 );
 

@@ -113,8 +113,8 @@ pub async fn run_server_relay(port: &str) -> Result<()> {
                                                 }
                                                 Message::Attack { x, y } => {
                                                     println!(
-                                                        "Player {} attacked ({}, {})",
-                                                        id1, x, y
+                                                        "Player {} attacked {}",
+                                                        id1, crate::game_state::GameState::format_coordinate(x, y)
                                                     );
                                                 }
                                                 Message::GameOver { won } => {
@@ -169,8 +169,8 @@ pub async fn run_server_relay(port: &str) -> Result<()> {
                                                 }
                                                 Message::Attack { x, y } => {
                                                     println!(
-                                                        "Player {} attacked ({}, {})",
-                                                        id2, x, y
+                                                        "Player {} attacked {}",
+                                                        id2, crate::game_state::GameState::format_coordinate(x, y)
                                                     );
                                                 }
                                                 Message::GameOver { won } => {
