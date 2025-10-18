@@ -96,6 +96,44 @@ pub async fn run_client(addr: &str) -> Result<()> {
                                     "💀 YOU LOSE! 💀".to_string()
                                 });
                             }
+                            Message::PlayAgainRequest => {
+                                state.phase = GamePhase::PlayAgainPrompt;
+                                state
+                                    .messages
+                                    .push("Do you want to play again? (Y/N)".to_string());
+                            }
+                            Message::PlayAgainResponse { wants_to_play } => {
+                                if wants_to_play {
+                                    state
+                                        .messages
+                                        .push("Opponent wants to play again!".to_string());
+                                } else {
+                                    state
+                                        .messages
+                                        .push("Opponent doesn't want to play again.".to_string());
+                                }
+                            }
+                            Message::PlayAgainTimeout => {
+                                state
+                                    .messages
+                                    .push("Play again timeout - ending game.".to_string());
+                            }
+                            Message::OpponentQuit => {
+                                state
+                                    .messages
+                                    .push("Opponent has quit the game.".to_string());
+                                state.phase = GamePhase::GameOver;
+                            }
+                            Message::NewGameStart => {
+                                state.reset_for_new_game();
+                                state
+                                    .messages
+                                    .push("New game starting! Place your ships.".to_string());
+                            }
+                            Message::Quit => {
+                                state.messages.push("You have quit the game.".to_string());
+                                state.phase = GamePhase::GameOver;
+                            }
                             _ => {}
                         }
                     }

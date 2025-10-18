@@ -121,7 +121,15 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                                     serde_json::to_string(&Message::GameOver { won: true })?
                                 )?;
                                 println!("Player wins!");
-                                break;
+
+                                // Ask if player wants to play again
+                                writeln!(
+                                    stream,
+                                    "{}",
+                                    serde_json::to_string(&Message::PlayAgainRequest)?
+                                )?;
+                                println!("Asking player if they want to play again...");
+                                continue;
                             }
 
                             // AI's turn
@@ -164,7 +172,15 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                                         serde_json::to_string(&Message::GameOver { won: false })?
                                     )?;
                                     println!("AI wins!");
-                                    break;
+
+                                    // Ask if player wants to play again
+                                    writeln!(
+                                        stream,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    println!("Asking player if they want to play again...");
+                                    continue;
                                 }
 
                                 // Back to player's turn
@@ -176,6 +192,69 @@ pub async fn run_server_ai(port: &str) -> Result<()> {
                             writeln!(stream, "{}", serde_json::to_string(&Message::GameStart)?)?;
                             writeln!(stream, "{}", serde_json::to_string(&Message::YourTurn)?)?;
                             println!("Game started!");
+                        }
+                        Message::PlayAgainResponse { wants_to_play } => {
+                            if wants_to_play {
+                                println!("Player wants to play again! Starting new game...");
+
+                                // Reset AI's board
+                                ai_grid = vec![vec![CellState::Empty; GRID_SIZE]; GRID_SIZE];
+                                for (len, _name) in SHIPS {
+                                    'place: loop {
+                                        let x = rng.random_range(0..GRID_SIZE);
+                                        let y = rng.random_range(0..GRID_SIZE);
+                                        let horiz = rng.random_bool(0.5);
+
+                                        let can = if horiz {
+                                            if x + len > GRID_SIZE {
+                                                false
+                                            } else {
+                                                (0..len)
+                                                    .all(|i| ai_grid[y][x + i] == CellState::Empty)
+                                            }
+                                        } else if y + len > GRID_SIZE {
+                                            false
+                                        } else {
+                                            (0..len).all(|i| ai_grid[y + i][x] == CellState::Empty)
+                                        };
+
+                                        if can {
+                                            if horiz {
+                                                for i in 0..len {
+                                                    ai_grid[y][x + i] = CellState::Ship;
+                                                }
+                                            } else {
+                                                for i in 0..len {
+                                                    ai_grid[y + i][x] = CellState::Ship;
+                                                }
+                                            }
+                                            break 'place;
+                                        }
+                                    }
+                                }
+
+                                // Reset AI's firing grid
+                                ai_fired = vec![vec![false; GRID_SIZE]; GRID_SIZE];
+
+                                // Reset player grid
+                                player_grid = None;
+
+                                // Notify client that new game is starting
+                                let _ = writeln!(
+                                    stream,
+                                    "{}",
+                                    serde_json::to_string(&Message::NewGameStart)?
+                                );
+
+                                println!("New game ready! Waiting for player to place ships...");
+                            } else {
+                                println!("Player doesn't want to play again. Ending session.");
+                                break;
+                            }
+                        }
+                        Message::Quit => {
+                            println!("Player quit the game");
+                            break;
                         }
                         _ => {}
                     }

@@ -29,6 +29,18 @@ pub fn draw_ui(f: &mut Frame, state: &GameState) {
                 SHIPS.len() - state.placing_ship_idx
             )
         }
+        GamePhase::PlayAgainPrompt => "Do you want to play again? (Y/N)".to_string(),
+        GamePhase::GameOver => {
+            if let Some(won) = state.winner {
+                if won {
+                    "🎉 YOU WIN! 🎉".to_string()
+                } else {
+                    "💀 YOU LOSE! 💀".to_string()
+                }
+            } else {
+                "Game Over".to_string()
+            }
+        }
         _ => format!(
             "Ships placed: {} / {}",
             state.placing_ship_idx.min(SHIPS.len()),

@@ -26,6 +26,9 @@ pub struct GameState {
     pub turn_count: usize,
     pub turn_start_time: Option<Instant>,
     pub turn_times: Vec<f64>, // Store last 10 turn times
+    // Play again functionality
+    pub play_again_response: Option<bool>,
+    pub waiting_for_play_again: bool,
 }
 
 impl GameState {
@@ -57,6 +60,9 @@ impl GameState {
             turn_count: 0,
             turn_start_time: None,
             turn_times: Vec::new(),
+            // Play again functionality
+            play_again_response: None,
+            waiting_for_play_again: false,
         }
     }
 
@@ -241,5 +247,30 @@ impl GameState {
 
     pub fn get_ships_sunk(&self) -> usize {
         self.ship_status.iter().filter(|ship| ship.sunk).count()
+    }
+
+    pub fn reset_for_new_game(&mut self) {
+        self.own_grid = vec![vec![CellState::Empty; GRID_SIZE]; GRID_SIZE];
+        self.enemy_grid = vec![vec![CellState::Empty; GRID_SIZE]; GRID_SIZE];
+        self.phase = GamePhase::Placing;
+        self.cursor = (0, 0);
+        self.placing_ship_idx = 0;
+        self.placing_horizontal = true;
+        self.messages =
+            vec!["Place your ships! Use arrows, R to rotate, Enter to place".to_string()];
+        self.winner = None;
+        self.total_shots = 0;
+        self.total_hits = 0;
+        self.turn_count = 0;
+        self.turn_start_time = None;
+        self.turn_times.clear();
+        self.play_again_response = None;
+        self.waiting_for_play_again = false;
+
+        // Reset ship status
+        for ship in &mut self.ship_status {
+            ship.hits = 0;
+            ship.sunk = false;
+        }
     }
 }

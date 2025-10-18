@@ -41,7 +41,10 @@ pub fn handle_key_event(
                     }
                 }
             }
-            KeyCode::Char('q') => return true,
+            KeyCode::Char('q') => {
+                let _ = tx.send(Message::Quit);
+                return true;
+            }
             _ => {}
         },
         GamePhase::YourTurn => match key.code {
@@ -60,19 +63,49 @@ pub fn handle_key_event(
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 state.show_side_panel = !state.show_side_panel;
             }
-            KeyCode::Char('q') => return true,
+            KeyCode::Char('q') => {
+                let _ = tx.send(Message::Quit);
+                return true;
+            }
             _ => {}
         },
         GamePhase::GameOver => {
             if key.code == KeyCode::Char('q') {
+                let _ = tx.send(Message::Quit);
                 return true;
             }
         }
+        GamePhase::PlayAgainPrompt => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let _ = tx.send(Message::PlayAgainResponse {
+                    wants_to_play: true,
+                });
+                state.messages.push("You chose to play again!".to_string());
+                state.phase = GamePhase::GameOver; // Will be reset by server if both agree
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                let _ = tx.send(Message::PlayAgainResponse {
+                    wants_to_play: false,
+                });
+                state
+                    .messages
+                    .push("You chose not to play again.".to_string());
+                state.phase = GamePhase::GameOver;
+            }
+            KeyCode::Char('q') => {
+                let _ = tx.send(Message::Quit);
+                return true;
+            }
+            _ => {}
+        },
         GamePhase::WaitingForOpponent | GamePhase::OpponentTurn => match key.code {
             KeyCode::Char('s') | KeyCode::Char('S') => {
                 state.show_side_panel = !state.show_side_panel;
             }
-            KeyCode::Char('q') => return true,
+            KeyCode::Char('q') => {
+                let _ = tx.send(Message::Quit);
+                return true;
+            }
             _ => {}
         },
     }

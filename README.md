@@ -9,6 +9,7 @@ Terminal-based networked Battleship game written in Rust.
 - Two-player networked gameplay over TCP
 - Single-player mode against AI opponent
 - Relay server mode for remote play
+- Play again functionality with timeout handling
 - Terminal UI using ratatui
 
 ## Requirements
@@ -74,6 +75,7 @@ cargo run --release -- client your-server-ip:8080
 - R: Rotate ship during placement
 - Enter: Place ship / Fire at position
 - S: Toggle side panel (ship status & statistics)
+- Y/N: Play again (when prompted)
 - Q: Quit
 
 ## Side Panel
@@ -124,6 +126,8 @@ JSON messages over TCP, newline-delimited. Message types:
 - `AttackResult`: Hit/miss/sunk feedback
 - `YourTurn` / `OpponentTurn`: Turn management
 - `GameOver`: End game state
+- `PlayAgainRequest` / `PlayAgainResponse`: Play again functionality
+- `NewGameStart`: Reset for new game
 
 The relay server forwards all messages between players.
 

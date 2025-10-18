@@ -37,6 +37,14 @@ pub enum Message {
     },
     WaitingForOpponent,
     GameStart,
+    PlayAgainRequest,
+    PlayAgainResponse {
+        wants_to_play: bool,
+    },
+    PlayAgainTimeout,
+    OpponentQuit,
+    NewGameStart,
+    Quit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -46,4 +54,5 @@ pub enum GamePhase {
     YourTurn,
     OpponentTurn,
     GameOver,
+    PlayAgainPrompt,
 }

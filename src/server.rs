@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::game_state::GameState;
@@ -13,6 +13,19 @@ struct PlayerConnection {
     stream: TcpStream,
     grid: Option<Vec<Vec<CellState>>>,
     ready: bool,
+}
+
+#[derive(Debug)]
+enum PlayAgainState {
+    None,
+    WaitingForResponses {
+        p1_response: Option<bool>,
+        p2_response: Option<bool>,
+        timeout_start: Instant,
+    },
+    Timeout,
+    BothAgreed,
+    OneDeclined,
 }
 
 pub async fn run_server(port: &str) -> Result<()> {
@@ -73,6 +86,7 @@ pub async fn run_server(port: &str) -> Result<()> {
     // Game loop
     let mut current_turn = 0; // 0 = player 1, 1 = player 2
     let mut game_over = false;
+    let mut play_again_state = PlayAgainState::None;
 
     while !game_over && !*shutdown.lock().unwrap() {
         // Read from both players
@@ -175,7 +189,24 @@ pub async fn run_server(port: &str) -> Result<()> {
                                         serde_json::to_string(&Message::GameOver { won: false })?
                                     )?;
                                     println!("\n🎉 Player 1 wins!");
-                                    game_over = true;
+
+                                    // Start play again process
+                                    play_again_state = PlayAgainState::WaitingForResponses {
+                                        p1_response: None,
+                                        p2_response: None,
+                                        timeout_start: Instant::now(),
+                                    };
+                                    writeln!(
+                                        p1.stream,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    writeln!(
+                                        p2.stream,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    println!("Asking both players if they want to play again...");
                                 } else {
                                     // Switch turn
                                     current_turn = 1;
@@ -192,6 +223,35 @@ pub async fn run_server(port: &str) -> Result<()> {
                                     println!("Player 2's turn\n");
                                 }
                             }
+                        }
+                        Message::PlayAgainResponse { wants_to_play } => {
+                            if let PlayAgainState::WaitingForResponses {
+                                p1_response,
+                                p2_response,
+                                ..
+                            } = &mut play_again_state
+                            {
+                                *p1_response = Some(wants_to_play);
+                                println!("Player 1 play again response: {}", wants_to_play);
+
+                                // Check if both players responded
+                                if let (Some(p1_resp), Some(p2_resp)) = (p1_response, p2_response) {
+                                    if *p1_resp && *p2_resp {
+                                        play_again_state = PlayAgainState::BothAgreed;
+                                    } else {
+                                        play_again_state = PlayAgainState::OneDeclined;
+                                    }
+                                }
+                            }
+                        }
+                        Message::Quit => {
+                            println!("Player 1 quit the game");
+                            let _ = writeln!(
+                                p2.stream,
+                                "{}",
+                                serde_json::to_string(&Message::OpponentQuit)?
+                            );
+                            game_over = true;
                         }
                         _ => {}
                     }
@@ -302,7 +362,24 @@ pub async fn run_server(port: &str) -> Result<()> {
                                         serde_json::to_string(&Message::GameOver { won: true })?
                                     )?;
                                     println!("\n🎉 Player 2 wins!");
-                                    game_over = true;
+
+                                    // Start play again process
+                                    play_again_state = PlayAgainState::WaitingForResponses {
+                                        p1_response: None,
+                                        p2_response: None,
+                                        timeout_start: Instant::now(),
+                                    };
+                                    writeln!(
+                                        p1.stream,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    writeln!(
+                                        p2.stream,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    println!("Asking both players if they want to play again...");
                                 } else {
                                     // Switch turn
                                     current_turn = 0;
@@ -320,6 +397,35 @@ pub async fn run_server(port: &str) -> Result<()> {
                                 }
                             }
                         }
+                        Message::PlayAgainResponse { wants_to_play } => {
+                            if let PlayAgainState::WaitingForResponses {
+                                p1_response,
+                                p2_response,
+                                ..
+                            } = &mut play_again_state
+                            {
+                                *p2_response = Some(wants_to_play);
+                                println!("Player 2 play again response: {}", wants_to_play);
+
+                                // Check if both players responded
+                                if let (Some(p1_resp), Some(p2_resp)) = (p1_response, p2_response) {
+                                    if *p1_resp && *p2_resp {
+                                        play_again_state = PlayAgainState::BothAgreed;
+                                    } else {
+                                        play_again_state = PlayAgainState::OneDeclined;
+                                    }
+                                }
+                            }
+                        }
+                        Message::Quit => {
+                            println!("Player 2 quit the game");
+                            let _ = writeln!(
+                                p1.stream,
+                                "{}",
+                                serde_json::to_string(&Message::OpponentQuit)?
+                            );
+                            game_over = true;
+                        }
                         _ => {}
                     }
                 }
@@ -329,6 +435,50 @@ pub async fn run_server(port: &str) -> Result<()> {
                 println!("Player 2 connection error");
                 break;
             }
+        }
+
+        // Handle play again state transitions
+        match &mut play_again_state {
+            PlayAgainState::WaitingForResponses { timeout_start, .. } => {
+                if timeout_start.elapsed() > Duration::from_secs(30) {
+                    println!("Play again timeout - no response from one or both players");
+                    play_again_state = PlayAgainState::Timeout;
+                }
+            }
+            PlayAgainState::BothAgreed => {
+                println!("Both players want to play again! Starting new game...");
+
+                // Reset game state
+                p1.grid = None;
+                p1.ready = false;
+                p2.grid = None;
+                p2.ready = false;
+                current_turn = 0;
+                play_again_state = PlayAgainState::None;
+
+                // Notify both players that new game is starting
+                let _ = writeln!(
+                    p1.stream,
+                    "{}",
+                    serde_json::to_string(&Message::NewGameStart)?
+                );
+                let _ = writeln!(
+                    p2.stream,
+                    "{}",
+                    serde_json::to_string(&Message::NewGameStart)?
+                );
+
+                println!("New game ready! Waiting for players to place ships...");
+            }
+            PlayAgainState::OneDeclined => {
+                println!("One player declined to play again. Ending session.");
+                game_over = true;
+            }
+            PlayAgainState::Timeout => {
+                println!("Play again timeout reached. Ending session.");
+                game_over = true;
+            }
+            PlayAgainState::None => {}
         }
 
         tokio::time::sleep(Duration::from_millis(10)).await;
