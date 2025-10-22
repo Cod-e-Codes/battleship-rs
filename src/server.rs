@@ -121,21 +121,25 @@ pub async fn run_game_session(
                                     "{}",
                                     serde_json::to_string(&Message::GameStart)?
                                 )?;
+                                p1.stream.flush()?;
                                 writeln!(
                                     p2.stream,
                                     "{}",
                                     serde_json::to_string(&Message::GameStart)?
                                 )?;
+                                p2.stream.flush()?;
                                 writeln!(
                                     p1.stream,
                                     "{}",
                                     serde_json::to_string(&Message::YourTurn)?
                                 )?;
+                                p1.stream.flush()?;
                                 writeln!(
                                     p2.stream,
                                     "{}",
                                     serde_json::to_string(&Message::OpponentTurn)?
                                 )?;
+                                p2.stream.flush()?;
                                 println!("Game started! Player 1's turn\n");
                             } else {
                                 writeln!(
@@ -143,6 +147,7 @@ pub async fn run_game_session(
                                     "{}",
                                     serde_json::to_string(&Message::WaitingForOpponent)?
                                 )?;
+                                p1.stream.flush()?;
                             }
                         }
                         Message::Attack { x, y } if current_turn == 0 && p1.ready && p2.ready => {
@@ -169,6 +174,7 @@ pub async fn run_game_session(
                                         sunk
                                     })?
                                 )?;
+                                p1.stream.flush()?;
 
                                 // Send attack to player 2
                                 writeln!(
@@ -176,6 +182,7 @@ pub async fn run_game_session(
                                     "{}",
                                     serde_json::to_string(&Message::Attack { x, y })?
                                 )?;
+                                p2.stream.flush()?;
 
                                 println!(
                                     "Player 1 attacked {} - {}",
@@ -190,11 +197,13 @@ pub async fn run_game_session(
                                         "{}",
                                         serde_json::to_string(&Message::GameOver { won: true })?
                                     )?;
+                                    p1.stream.flush()?;
                                     writeln!(
                                         p2.stream,
                                         "{}",
                                         serde_json::to_string(&Message::GameOver { won: false })?
                                     )?;
+                                    p2.stream.flush()?;
                                     println!("\n🎉 Player 1 wins!");
 
                                     // Start play again process
@@ -208,11 +217,13 @@ pub async fn run_game_session(
                                         "{}",
                                         serde_json::to_string(&Message::PlayAgainRequest)?
                                     )?;
+                                    p1.stream.flush()?;
                                     writeln!(
                                         p2.stream,
                                         "{}",
                                         serde_json::to_string(&Message::PlayAgainRequest)?
                                     )?;
+                                    p2.stream.flush()?;
                                     println!("Asking both players if they want to play again...");
                                 } else {
                                     // Switch turn
@@ -222,11 +233,13 @@ pub async fn run_game_session(
                                         "{}",
                                         serde_json::to_string(&Message::OpponentTurn)?
                                     )?;
+                                    p1.stream.flush()?;
                                     writeln!(
                                         p2.stream,
                                         "{}",
                                         serde_json::to_string(&Message::YourTurn)?
                                     )?;
+                                    p2.stream.flush()?;
                                     println!("Player 2's turn\n");
                                 }
                             }
@@ -258,6 +271,7 @@ pub async fn run_game_session(
                                 "{}",
                                 serde_json::to_string(&Message::OpponentQuit)?
                             );
+                            let _ = p2.stream.flush();
                             game_over = true;
                         }
                         _ => {}
@@ -293,21 +307,25 @@ pub async fn run_game_session(
                                     "{}",
                                     serde_json::to_string(&Message::GameStart)?
                                 )?;
+                                p1.stream.flush()?;
                                 writeln!(
                                     p2.stream,
                                     "{}",
                                     serde_json::to_string(&Message::GameStart)?
                                 )?;
+                                p2.stream.flush()?;
                                 writeln!(
                                     p1.stream,
                                     "{}",
                                     serde_json::to_string(&Message::YourTurn)?
                                 )?;
+                                p1.stream.flush()?;
                                 writeln!(
                                     p2.stream,
                                     "{}",
                                     serde_json::to_string(&Message::OpponentTurn)?
                                 )?;
+                                p2.stream.flush()?;
                                 println!("Game started! Player 1's turn\n");
                             } else {
                                 writeln!(
@@ -315,6 +333,7 @@ pub async fn run_game_session(
                                     "{}",
                                     serde_json::to_string(&Message::WaitingForOpponent)?
                                 )?;
+                                p2.stream.flush()?;
                             }
                         }
                         Message::Attack { x, y } if current_turn == 1 && p1.ready && p2.ready => {
@@ -341,6 +360,7 @@ pub async fn run_game_session(
                                         sunk
                                     })?
                                 )?;
+                                p2.stream.flush()?;
 
                                 // Send attack to player 1
                                 writeln!(
@@ -348,6 +368,7 @@ pub async fn run_game_session(
                                     "{}",
                                     serde_json::to_string(&Message::Attack { x, y })?
                                 )?;
+                                p1.stream.flush()?;
 
                                 println!(
                                     "Player 2 attacked {} - {}",
@@ -362,11 +383,13 @@ pub async fn run_game_session(
                                         "{}",
                                         serde_json::to_string(&Message::GameOver { won: false })?
                                     )?;
+                                    p1.stream.flush()?;
                                     writeln!(
                                         p2.stream,
                                         "{}",
                                         serde_json::to_string(&Message::GameOver { won: true })?
                                     )?;
+                                    p2.stream.flush()?;
                                     println!("\n🎉 Player 2 wins!");
 
                                     // Start play again process
@@ -380,11 +403,13 @@ pub async fn run_game_session(
                                         "{}",
                                         serde_json::to_string(&Message::PlayAgainRequest)?
                                     )?;
+                                    p1.stream.flush()?;
                                     writeln!(
                                         p2.stream,
                                         "{}",
                                         serde_json::to_string(&Message::PlayAgainRequest)?
                                     )?;
+                                    p2.stream.flush()?;
                                     println!("Asking both players if they want to play again...");
                                 } else {
                                     // Switch turn
@@ -394,11 +419,13 @@ pub async fn run_game_session(
                                         "{}",
                                         serde_json::to_string(&Message::YourTurn)?
                                     )?;
+                                    p1.stream.flush()?;
                                     writeln!(
                                         p2.stream,
                                         "{}",
                                         serde_json::to_string(&Message::OpponentTurn)?
                                     )?;
+                                    p2.stream.flush()?;
                                     println!("Player 1's turn\n");
                                 }
                             }
@@ -430,6 +457,7 @@ pub async fn run_game_session(
                                 "{}",
                                 serde_json::to_string(&Message::OpponentQuit)?
                             );
+                            let _ = p1.stream.flush();
                             game_over = true;
                         }
                         _ => {}
@@ -468,11 +496,13 @@ pub async fn run_game_session(
                     "{}",
                     serde_json::to_string(&Message::NewGameStart)?
                 );
+                let _ = p1.stream.flush();
                 let _ = writeln!(
                     p2.stream,
                     "{}",
                     serde_json::to_string(&Message::NewGameStart)?
                 );
+                let _ = p2.stream.flush();
 
                 println!("New game ready! Waiting for players to place ships...");
             }
