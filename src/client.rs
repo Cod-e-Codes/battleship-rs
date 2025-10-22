@@ -20,20 +20,24 @@ use crate::ui::draw_ui;
 
 pub async fn run_client(addr: &str) -> Result<()> {
     let stream = TcpStream::connect(addr)?;
-    stream.set_nonblocking(true)?;
+    // Don't set nonblocking on the read stream
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut writer = stream;
+    writer.set_nonblocking(true)?;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let state = Arc::new(Mutex::new(GameState::new()));
     let state_clone = state.clone();
 
-    // Network receiver thread
+    // Network receiver thread - use blocking reads
     tokio::spawn(async move {
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line) {
-                Ok(0) => break,
+                Ok(0) => {
+                    println!("Server disconnected");
+                    break;
+                }
                 Ok(_) => {
                     if let Ok(msg) = serde_json::from_str::<Message>(&line) {
                         let mut state = state_clone.lock().unwrap();
@@ -149,10 +153,10 @@ pub async fn run_client(addr: &str) -> Result<()> {
                         }
                     }
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                Err(e) => {
+                    eprintln!("Read error: {}", e);
+                    break;
                 }
-                Err(_) => break,
             }
         }
     });
@@ -161,7 +165,20 @@ pub async fn run_client(addr: &str) -> Result<()> {
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             let json = serde_json::to_string(&msg).unwrap() + "\n";
-            let _ = writer.write_all(json.as_bytes());
+            match writer.write_all(json.as_bytes()) {
+                Ok(_) => {
+                    let _ = writer.flush();
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    let _ = writer.write_all(json.as_bytes());
+                    let _ = writer.flush();
+                }
+                Err(e) => {
+                    eprintln!("Write error: {}", e);
+                    break;
+                }
+            }
         }
     });
 
