@@ -1,20 +1,37 @@
 use anyhow::Result;
 use std::{
-    collections::HashMap,
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
-use tokio::sync::mpsc;
 
-use crate::types::Message;
+use crate::game_state::GameState;
+use crate::types::{CellState, Message};
 
-// Track game state
-struct GameState {
-    player1_ready: bool,
-    player2_ready: bool,
-    game_started: bool,
+struct PlayerConnection {
+    grid: Option<Vec<Vec<CellState>>>,
+    ready: bool,
+}
+
+#[derive(Debug)]
+enum PlayAgainState {
+    None,
+    WaitingForResponses {
+        p1_response: Option<bool>,
+        p2_response: Option<bool>,
+        timeout_start: Instant,
+    },
+    Timeout,
+    BothAgreed,
+    OneDeclined,
+}
+
+struct RelayState {
+    p1: PlayerConnection,
+    p2: PlayerConnection,
+    current_turn: usize, // 0 = player 1, 1 = player 2
+    play_again_state: PlayAgainState,
 }
 
 pub async fn run_server_relay(port: &str) -> Result<()> {
@@ -32,365 +49,19 @@ pub async fn run_server_relay(port: &str) -> Result<()> {
         println!("\nShutting down relay server...");
     });
 
-    let players: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<String>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    // Wait for two players
+    let mut players: Vec<TcpStream> = Vec::new();
 
-    let game_state = Arc::new(Mutex::new(GameState {
-        player1_ready: false,
-        player2_ready: false,
-        game_started: false,
-    }));
-
-    let mut next_id = 0;
-    let mut connections: Vec<(usize, TcpStream)> = Vec::new();
-
-    loop {
+    while players.len() < 2 {
         if *shutdown.lock().unwrap() {
-            break;
+            return Ok(());
         }
 
-        // Accept new connections
         match listener.accept() {
             Ok((stream, addr)) => {
                 stream.set_nonblocking(true)?;
-                let player_id = next_id;
-                next_id += 1;
-
-                println!("Player {} connected: {}", player_id, addr);
-
-                // Send initial message to the client
-                let mut writer = stream.try_clone()?;
-                let initial_msg = serde_json::to_string(&Message::WaitingForOpponent)? + "\n";
-                writer.write_all(initial_msg.as_bytes())?;
-
-                connections.push((player_id, stream));
-
-                // If we have 2 players, start the relay
-                if connections.len() == 2 {
-                    println!("\n2 players connected! Starting relay...\n");
-
-                    let (id1, stream1) = connections.remove(0);
-                    let (id2, stream2) = connections.remove(0);
-
-                    let players_clone1 = players.clone();
-                    let players_clone2 = players.clone();
-                    let shutdown_clone1 = shutdown.clone();
-                    let shutdown_clone2 = shutdown.clone();
-                    let game_state_clone1 = game_state.clone();
-                    let game_state_clone2 = game_state.clone();
-
-                    // Create channels for each player
-                    let (tx1, mut rx1) = mpsc::unbounded_channel();
-                    let (tx2, mut rx2) = mpsc::unbounded_channel();
-
-                    players.lock().unwrap().insert(id1, tx1.clone());
-                    players.lock().unwrap().insert(id2, tx2.clone());
-
-                    // Spawn sender task for player 1
-                    let mut writer1 = stream1.try_clone()?;
-                    tokio::spawn(async move {
-                        while let Some(msg) = rx1.recv().await {
-                            if writer1.write_all(msg.as_bytes()).is_err() {
-                                break;
-                            }
-                        }
-                    });
-
-                    // Spawn sender task for player 2
-                    let mut writer2 = stream2.try_clone()?;
-                    tokio::spawn(async move {
-                        while let Some(msg) = rx2.recv().await {
-                            if writer2.write_all(msg.as_bytes()).is_err() {
-                                break;
-                            }
-                        }
-                    });
-
-                    // Spawn receiver task for player 1
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stream1);
-                        let mut line = String::new();
-                        loop {
-                            if *shutdown_clone1.lock().unwrap() {
-                                break;
-                            }
-
-                            line.clear();
-                            match reader.read_line(&mut line) {
-                                Ok(0) => {
-                                    println!("Player {} disconnected", id1);
-                                    break;
-                                }
-                                Ok(_) => {
-                                    // Parse message first to handle game coordination
-                                    if let Ok(msg) = serde_json::from_str::<Message>(&line) {
-                                        match msg {
-                                            Message::PlaceShips(_) => {
-                                                println!("Player {} placed ships", id1);
-
-                                                // Update game state
-                                                let mut gs = game_state_clone1.lock().unwrap();
-                                                gs.player1_ready = true;
-
-                                                // Relay to player 2
-                                                if let Some(tx) =
-                                                    players_clone1.lock().unwrap().get(&id2)
-                                                {
-                                                    let _ = tx.send(line.clone());
-                                                }
-
-                                                // Check if both ready
-                                                if gs.player1_ready
-                                                    && gs.player2_ready
-                                                    && !gs.game_started
-                                                {
-                                                    gs.game_started = true;
-                                                    println!(
-                                                        "Both players ready! Starting game..."
-                                                    );
-
-                                                    // Send GameStart to both
-                                                    if let Some(tx) =
-                                                        players_clone1.lock().unwrap().get(&id1)
-                                                    {
-                                                        let msg = serde_json::to_string(
-                                                            &Message::GameStart,
-                                                        )
-                                                        .unwrap()
-                                                            + "\n";
-                                                        let _ = tx.send(msg);
-                                                    }
-                                                    if let Some(tx) =
-                                                        players_clone1.lock().unwrap().get(&id2)
-                                                    {
-                                                        let msg = serde_json::to_string(
-                                                            &Message::GameStart,
-                                                        )
-                                                        .unwrap()
-                                                            + "\n";
-                                                        let _ = tx.send(msg);
-                                                    }
-
-                                                    // Send YourTurn to player 1, OpponentTurn to player 2
-                                                    if let Some(tx) =
-                                                        players_clone1.lock().unwrap().get(&id1)
-                                                    {
-                                                        let msg = serde_json::to_string(
-                                                            &Message::YourTurn,
-                                                        )
-                                                        .unwrap()
-                                                            + "\n";
-                                                        let _ = tx.send(msg);
-                                                    }
-                                                    if let Some(tx) =
-                                                        players_clone1.lock().unwrap().get(&id2)
-                                                    {
-                                                        let msg = serde_json::to_string(
-                                                            &Message::OpponentTurn,
-                                                        )
-                                                        .unwrap()
-                                                            + "\n";
-                                                        let _ = tx.send(msg);
-                                                    }
-
-                                                    println!("Player 1's turn\n");
-                                                }
-                                            }
-                                            Message::Attack { x, y } => {
-                                                println!(
-                                                    "Player {} attacked {}",
-                                                    id1,
-                                                    crate::game_state::GameState::format_coordinate(
-                                                        x, y
-                                                    )
-                                                );
-                                                // Relay to player 2
-                                                if let Some(tx) =
-                                                    players_clone1.lock().unwrap().get(&id2)
-                                                {
-                                                    let _ = tx.send(line.clone());
-                                                }
-                                            }
-                                            Message::GameOver { won } => {
-                                                println!(
-                                                    "Game over! Player {} {}",
-                                                    id1,
-                                                    if won { "won" } else { "lost" }
-                                                );
-                                                // Relay to player 2
-                                                if let Some(tx) =
-                                                    players_clone1.lock().unwrap().get(&id2)
-                                                {
-                                                    let _ = tx.send(line.clone());
-                                                }
-                                            }
-                                            _ => {
-                                                // Relay all other messages
-                                                if let Some(tx) =
-                                                    players_clone1.lock().unwrap().get(&id2)
-                                                {
-                                                    let _ = tx.send(line.clone());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                    tokio::time::sleep(Duration::from_millis(10)).await;
-                                }
-                                Err(_) => {
-                                    println!("Player {} connection error", id1);
-                                    break;
-                                }
-                            }
-                        }
-                        players_clone1.lock().unwrap().remove(&id1);
-                    });
-
-                    // Spawn receiver task for player 2
-                    tokio::spawn(async move {
-                        let mut reader = BufReader::new(stream2);
-                        let mut line = String::new();
-                        loop {
-                            if *shutdown_clone2.lock().unwrap() {
-                                break;
-                            }
-
-                            line.clear();
-                            match reader.read_line(&mut line) {
-                                Ok(0) => {
-                                    println!("Player {} disconnected", id2);
-                                    break;
-                                }
-                                Ok(_) => {
-                                    // Parse message first to handle game coordination
-                                    if let Ok(msg) = serde_json::from_str::<Message>(&line) {
-                                        match msg {
-                                            Message::PlaceShips(_) => {
-                                                println!("Player {} placed ships", id2);
-
-                                                // Update game state
-                                                let mut gs = game_state_clone2.lock().unwrap();
-                                                gs.player2_ready = true;
-
-                                                // Relay to player 1
-                                                if let Some(tx) =
-                                                    players_clone2.lock().unwrap().get(&id1)
-                                                {
-                                                    let _ = tx.send(line.clone());
-                                                }
-
-                                                // Check if both ready
-                                                if gs.player1_ready
-                                                    && gs.player2_ready
-                                                    && !gs.game_started
-                                                {
-                                                    gs.game_started = true;
-                                                    println!(
-                                                        "Both players ready! Starting game..."
-                                                    );
-
-                                                    // Send GameStart to both
-                                                    if let Some(tx) =
-                                                        players_clone2.lock().unwrap().get(&id1)
-                                                    {
-                                                        let msg = serde_json::to_string(
-                                                            &Message::GameStart,
-                                                        )
-                                                        .unwrap()
-                                                            + "\n";
-                                                        let _ = tx.send(msg);
-                                                    }
-                                                    if let Some(tx) =
-                                                        players_clone2.lock().unwrap().get(&id2)
-                                                    {
-                                                        let msg = serde_json::to_string(
-                                                            &Message::GameStart,
-                                                        )
-                                                        .unwrap()
-                                                            + "\n";
-                                                        let _ = tx.send(msg);
-                                                    }
-
-                                                    // Send YourTurn to player 1, OpponentTurn to player 2
-                                                    if let Some(tx) =
-                                                        players_clone2.lock().unwrap().get(&id1)
-                                                    {
-                                                        let msg = serde_json::to_string(
-                                                            &Message::YourTurn,
-                                                        )
-                                                        .unwrap()
-                                                            + "\n";
-                                                        let _ = tx.send(msg);
-                                                    }
-                                                    if let Some(tx) =
-                                                        players_clone2.lock().unwrap().get(&id2)
-                                                    {
-                                                        let msg = serde_json::to_string(
-                                                            &Message::OpponentTurn,
-                                                        )
-                                                        .unwrap()
-                                                            + "\n";
-                                                        let _ = tx.send(msg);
-                                                    }
-
-                                                    println!("Player 1's turn\n");
-                                                }
-                                            }
-                                            Message::Attack { x, y } => {
-                                                println!(
-                                                    "Player {} attacked {}",
-                                                    id2,
-                                                    crate::game_state::GameState::format_coordinate(
-                                                        x, y
-                                                    )
-                                                );
-                                                // Relay to player 1
-                                                if let Some(tx) =
-                                                    players_clone2.lock().unwrap().get(&id1)
-                                                {
-                                                    let _ = tx.send(line.clone());
-                                                }
-                                            }
-                                            Message::GameOver { won } => {
-                                                println!(
-                                                    "Game over! Player {} {}",
-                                                    id2,
-                                                    if won { "won" } else { "lost" }
-                                                );
-                                                // Relay to player 1
-                                                if let Some(tx) =
-                                                    players_clone2.lock().unwrap().get(&id1)
-                                                {
-                                                    let _ = tx.send(line.clone());
-                                                }
-                                            }
-                                            _ => {
-                                                // Relay all other messages
-                                                if let Some(tx) =
-                                                    players_clone2.lock().unwrap().get(&id1)
-                                                {
-                                                    let _ = tx.send(line.clone());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                    tokio::time::sleep(Duration::from_millis(10)).await;
-                                }
-                                Err(_) => {
-                                    println!("Player {} connection error", id2);
-                                    break;
-                                }
-                            }
-                        }
-                        players_clone2.lock().unwrap().remove(&id2);
-                    });
-
-                    // Wait for game to end
-                    println!("Relay active. Waiting for game to complete...\n");
-                }
+                println!("Player {} connected: {}", players.len() + 1, addr);
+                players.push(stream);
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -401,6 +72,417 @@ pub async fn run_server_relay(port: &str) -> Result<()> {
         }
     }
 
-    println!("Relay server shut down");
+    println!("\n2 players connected! Starting game...\n");
+
+    let stream1 = players.remove(0);
+    let stream2 = players.remove(0);
+
+    let mut p1_reader = BufReader::new(stream1.try_clone()?);
+    let mut p2_reader = BufReader::new(stream2.try_clone()?);
+    let mut p1_writer = stream1;
+    let mut p2_writer = stream2;
+
+    let relay_state = Arc::new(Mutex::new(RelayState {
+        p1: PlayerConnection {
+            grid: None,
+            ready: false,
+        },
+        p2: PlayerConnection {
+            grid: None,
+            ready: false,
+        },
+        current_turn: 0,
+        play_again_state: PlayAgainState::None,
+    }));
+
+    let mut game_over = false;
+
+    while !game_over && !*shutdown.lock().unwrap() {
+        let mut line = String::new();
+
+        // Check player 1
+        match p1_reader.read_line(&mut line) {
+            Ok(0) => {
+                println!("Player 1 disconnected");
+                break;
+            }
+            Ok(_) => {
+                if let Ok(msg) = serde_json::from_str::<Message>(&line) {
+                    let mut state = relay_state.lock().unwrap();
+                    match msg {
+                        Message::PlaceShips(grid) => {
+                            state.p1.grid = Some(grid);
+                            state.p1.ready = true;
+                            println!("Player 1 placed ships");
+
+                            if state.p2.ready {
+                                writeln!(
+                                    p1_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::GameStart)?
+                                )?;
+                                writeln!(
+                                    p2_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::GameStart)?
+                                )?;
+                                writeln!(
+                                    p1_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::YourTurn)?
+                                )?;
+                                writeln!(
+                                    p2_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::OpponentTurn)?
+                                )?;
+                                println!("Game started! Player 1's turn\n");
+                            } else {
+                                writeln!(
+                                    p1_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::WaitingForOpponent)?
+                                )?;
+                            }
+                        }
+                        Message::Attack { x, y }
+                            if state.current_turn == 0 && state.p1.ready && state.p2.ready =>
+                        {
+                            // Player 1 attacks player 2
+                            if let Some(ref mut grid) = state.p2.grid {
+                                let hit = grid[y][x] == CellState::Ship;
+                                if hit {
+                                    grid[y][x] = CellState::Hit;
+                                }
+                                let sunk = if hit {
+                                    GameState::is_ship_sunk_at(grid, x, y)
+                                } else {
+                                    false
+                                };
+
+                                writeln!(
+                                    p1_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::AttackResult {
+                                        x,
+                                        y,
+                                        hit,
+                                        sunk
+                                    })?
+                                )?;
+
+                                writeln!(
+                                    p2_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::Attack { x, y })?
+                                )?;
+
+                                println!(
+                                    "Player 1 attacked {} - {}",
+                                    GameState::format_coordinate(x, y),
+                                    if hit { "HIT" } else { "MISS" }
+                                );
+
+                                if GameState::all_ships_sunk(grid) {
+                                    writeln!(
+                                        p1_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::GameOver { won: true })?
+                                    )?;
+                                    writeln!(
+                                        p2_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::GameOver { won: false })?
+                                    )?;
+                                    println!("\n🎉 Player 1 wins!");
+
+                                    state.play_again_state = PlayAgainState::WaitingForResponses {
+                                        p1_response: None,
+                                        p2_response: None,
+                                        timeout_start: Instant::now(),
+                                    };
+                                    writeln!(
+                                        p1_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    writeln!(
+                                        p2_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    println!("Asking both players if they want to play again...");
+                                } else {
+                                    state.current_turn = 1;
+                                    writeln!(
+                                        p1_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::OpponentTurn)?
+                                    )?;
+                                    writeln!(
+                                        p2_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::YourTurn)?
+                                    )?;
+                                    println!("Player 2's turn\n");
+                                }
+                            }
+                        }
+                        Message::PlayAgainResponse { wants_to_play } => {
+                            if let PlayAgainState::WaitingForResponses {
+                                p1_response,
+                                p2_response,
+                                ..
+                            } = &mut state.play_again_state
+                            {
+                                *p1_response = Some(wants_to_play);
+                                println!("Player 1 play again response: {}", wants_to_play);
+
+                                if let (Some(p1_resp), Some(p2_resp)) = (p1_response, p2_response) {
+                                    if *p1_resp && *p2_resp {
+                                        state.play_again_state = PlayAgainState::BothAgreed;
+                                    } else {
+                                        state.play_again_state = PlayAgainState::OneDeclined;
+                                    }
+                                }
+                            }
+                        }
+                        Message::Quit => {
+                            println!("Player 1 quit the game");
+                            let _ = writeln!(
+                                p2_writer,
+                                "{}",
+                                serde_json::to_string(&Message::OpponentQuit)?
+                            );
+                            game_over = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => {
+                println!("Player 1 connection error");
+                break;
+            }
+        }
+
+        // Check player 2
+        line.clear();
+        match p2_reader.read_line(&mut line) {
+            Ok(0) => {
+                println!("Player 2 disconnected");
+                break;
+            }
+            Ok(_) => {
+                if let Ok(msg) = serde_json::from_str::<Message>(&line) {
+                    let mut state = relay_state.lock().unwrap();
+                    match msg {
+                        Message::PlaceShips(grid) => {
+                            state.p2.grid = Some(grid);
+                            state.p2.ready = true;
+                            println!("Player 2 placed ships");
+
+                            if state.p1.ready {
+                                writeln!(
+                                    p1_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::GameStart)?
+                                )?;
+                                writeln!(
+                                    p2_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::GameStart)?
+                                )?;
+                                writeln!(
+                                    p1_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::YourTurn)?
+                                )?;
+                                writeln!(
+                                    p2_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::OpponentTurn)?
+                                )?;
+                                println!("Game started! Player 1's turn\n");
+                            } else {
+                                writeln!(
+                                    p2_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::WaitingForOpponent)?
+                                )?;
+                            }
+                        }
+                        Message::Attack { x, y }
+                            if state.current_turn == 1 && state.p1.ready && state.p2.ready =>
+                        {
+                            // Player 2 attacks player 1
+                            if let Some(ref mut grid) = state.p1.grid {
+                                let hit = grid[y][x] == CellState::Ship;
+                                if hit {
+                                    grid[y][x] = CellState::Hit;
+                                }
+                                let sunk = if hit {
+                                    GameState::is_ship_sunk_at(grid, x, y)
+                                } else {
+                                    false
+                                };
+
+                                writeln!(
+                                    p2_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::AttackResult {
+                                        x,
+                                        y,
+                                        hit,
+                                        sunk
+                                    })?
+                                )?;
+
+                                writeln!(
+                                    p1_writer,
+                                    "{}",
+                                    serde_json::to_string(&Message::Attack { x, y })?
+                                )?;
+
+                                println!(
+                                    "Player 2 attacked {} - {}",
+                                    GameState::format_coordinate(x, y),
+                                    if hit { "HIT" } else { "MISS" }
+                                );
+
+                                if GameState::all_ships_sunk(grid) {
+                                    writeln!(
+                                        p1_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::GameOver { won: false })?
+                                    )?;
+                                    writeln!(
+                                        p2_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::GameOver { won: true })?
+                                    )?;
+                                    println!("\n🎉 Player 2 wins!");
+
+                                    state.play_again_state = PlayAgainState::WaitingForResponses {
+                                        p1_response: None,
+                                        p2_response: None,
+                                        timeout_start: Instant::now(),
+                                    };
+                                    writeln!(
+                                        p1_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    writeln!(
+                                        p2_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::PlayAgainRequest)?
+                                    )?;
+                                    println!("Asking both players if they want to play again...");
+                                } else {
+                                    state.current_turn = 0;
+                                    writeln!(
+                                        p1_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::YourTurn)?
+                                    )?;
+                                    writeln!(
+                                        p2_writer,
+                                        "{}",
+                                        serde_json::to_string(&Message::OpponentTurn)?
+                                    )?;
+                                    println!("Player 1's turn\n");
+                                }
+                            }
+                        }
+                        Message::PlayAgainResponse { wants_to_play } => {
+                            if let PlayAgainState::WaitingForResponses {
+                                p1_response,
+                                p2_response,
+                                ..
+                            } = &mut state.play_again_state
+                            {
+                                *p2_response = Some(wants_to_play);
+                                println!("Player 2 play again response: {}", wants_to_play);
+
+                                if let (Some(p1_resp), Some(p2_resp)) = (p1_response, p2_response) {
+                                    if *p1_resp && *p2_resp {
+                                        state.play_again_state = PlayAgainState::BothAgreed;
+                                    } else {
+                                        state.play_again_state = PlayAgainState::OneDeclined;
+                                    }
+                                }
+                            }
+                        }
+                        Message::Quit => {
+                            println!("Player 2 quit the game");
+                            let _ = writeln!(
+                                p1_writer,
+                                "{}",
+                                serde_json::to_string(&Message::OpponentQuit)?
+                            );
+                            game_over = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => {
+                println!("Player 2 connection error");
+                break;
+            }
+        }
+
+        // Handle play again state transitions
+        {
+            let mut state = relay_state.lock().unwrap();
+            match &mut state.play_again_state {
+                PlayAgainState::WaitingForResponses { timeout_start, .. } => {
+                    if timeout_start.elapsed() > Duration::from_secs(30) {
+                        println!("Play again timeout - no response from one or both players");
+                        state.play_again_state = PlayAgainState::Timeout;
+                    }
+                }
+                PlayAgainState::BothAgreed => {
+                    println!("Both players want to play again! Starting new game...");
+
+                    state.p1.grid = None;
+                    state.p1.ready = false;
+                    state.p2.grid = None;
+                    state.p2.ready = false;
+                    state.current_turn = 0;
+                    state.play_again_state = PlayAgainState::None;
+
+                    let _ = writeln!(
+                        p1_writer,
+                        "{}",
+                        serde_json::to_string(&Message::NewGameStart)?
+                    );
+                    let _ = writeln!(
+                        p2_writer,
+                        "{}",
+                        serde_json::to_string(&Message::NewGameStart)?
+                    );
+
+                    println!("New game ready! Waiting for players to place ships...");
+                }
+                PlayAgainState::OneDeclined => {
+                    println!("One player declined to play again. Ending session.");
+                    game_over = true;
+                }
+                PlayAgainState::Timeout => {
+                    println!("Play again timeout reached. Ending session.");
+                    game_over = true;
+                }
+                PlayAgainState::None => {}
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    println!("Game ended");
     Ok(())
 }
