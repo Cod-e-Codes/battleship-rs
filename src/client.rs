@@ -20,22 +20,21 @@ use crate::ui::draw_ui;
 
 pub async fn run_client(addr: &str) -> Result<()> {
     let stream = TcpStream::connect(addr)?;
-    // Don't set nonblocking on the read stream
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut writer = stream;
-    writer.set_nonblocking(true)?;
+    // Keep both streams blocking - we'll handle this properly
+    let read_stream = stream.try_clone()?;
+    let write_stream = stream;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     let state = Arc::new(Mutex::new(GameState::new()));
     let state_clone = state.clone();
 
-    // Network receiver thread - use blocking reads
-    tokio::spawn(async move {
+    // Network receiver thread - blocking reads
+    tokio::task::spawn_blocking(move || {
+        let mut reader = BufReader::new(read_stream);
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line) {
                 Ok(0) => {
-                    println!("Server disconnected");
                     break;
                 }
                 Ok(_) => {
@@ -153,32 +152,20 @@ pub async fn run_client(addr: &str) -> Result<()> {
                         }
                     }
                 }
-                Err(e) => {
-                    eprintln!("Read error: {}", e);
-                    break;
-                }
+                Err(_) => break,
             }
         }
     });
 
-    // Network sender
-    tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
+    // Network sender - also blocking
+    tokio::task::spawn_blocking(move || {
+        let mut writer = write_stream;
+        while let Some(msg) = rx.blocking_recv() {
             let json = serde_json::to_string(&msg).unwrap() + "\n";
-            match writer.write_all(json.as_bytes()) {
-                Ok(_) => {
-                    let _ = writer.flush();
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    let _ = writer.write_all(json.as_bytes());
-                    let _ = writer.flush();
-                }
-                Err(e) => {
-                    eprintln!("Write error: {}", e);
-                    break;
-                }
+            if writer.write_all(json.as_bytes()).is_err() {
+                break;
             }
+            let _ = writer.flush();
         }
     });
 
