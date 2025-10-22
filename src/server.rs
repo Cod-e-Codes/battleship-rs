@@ -68,14 +68,22 @@ pub async fn run_server(port: &str) -> Result<()> {
 
     println!("\n2 players connected! Starting game...\n");
 
+    run_game_session(players.remove(0), players.remove(0), shutdown).await
+}
+
+pub async fn run_game_session(
+    stream1: TcpStream,
+    stream2: TcpStream,
+    shutdown: Arc<Mutex<bool>>,
+) -> Result<()> {
     // Create player connections
     let mut p1 = PlayerConnection {
-        stream: players.remove(0),
+        stream: stream1,
         grid: None,
         ready: false,
     };
     let mut p2 = PlayerConnection {
-        stream: players.remove(0),
+        stream: stream2,
         grid: None,
         ready: false,
     };
