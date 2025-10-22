@@ -44,11 +44,27 @@ pub async fn run_server_relay(port: &str) -> Result<()> {
                 next_id += 1;
 
                 println!("Player {} connected: {}", player_id, addr);
+
+                // Send initial message to the client
+                let mut writer = stream.try_clone()?;
+                let initial_msg = if connections.is_empty() {
+                    serde_json::to_string(&Message::WaitingForOpponent)? + "\n"
+                } else {
+                    serde_json::to_string(&Message::GameStart)? + "\n"
+                };
+                writer.write_all(initial_msg.as_bytes())?;
+
                 connections.push((player_id, stream));
 
                 // If we have 2 players, start the game
                 if connections.len() == 2 {
                     println!("\n2 players connected! Starting relay...\n");
+
+                    // Send GameStart to the first player
+                    let (_, first_stream) = &connections[0];
+                    let mut first_writer = first_stream.try_clone()?;
+                    let game_start_msg = serde_json::to_string(&Message::GameStart)? + "\n";
+                    first_writer.write_all(game_start_msg.as_bytes())?;
 
                     let (id1, stream1) = connections.remove(0);
                     let (id2, stream2) = connections.remove(0);
